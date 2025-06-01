@@ -109,33 +109,54 @@ class QuadrantView:
     
     def refresh_integrated_view(self):
         """刷新四象限+GTD整合视图"""
-        # 清空所有树形视图
-        for (priority, gtd_tag), tree in self.integrated_trees.items():
-            for item in tree.get_children():
-                tree.delete(item)
-        
-        # 获取所有待办事项
-        todos = self.db_manager.get_all_todos()
-        
-        # 按四象限和GTD标签分类显示
-        for todo in todos:
-            todo_id, title, project, due_date, status, priority, gtd_tag = todo
+        try:
+            # 清空所有树形视图
+            for (priority, gtd_tag), tree in self.integrated_trees.items():
+                for item in tree.get_children():
+                    tree.delete(item)
             
-            # 确定树形视图
-            tree_key = (priority, gtd_tag)
-            if tree_key in self.integrated_trees:
-                tree = self.integrated_trees[tree_key]
-                
-                # 显示状态图标
-                status_icon = "✓" if status == "completed" else "○"
-                
-                # 插入项目
-                tree.insert("", "end", values=(status_icon, title, project, due_date), tags=(todo_id,))
-                
-                # 设置已完成任务的样式
-                if status == "completed":
-                    item = tree.get_children()[-1]
-                    tree.set(item, "status", "✓")
+            # 获取所有待办事项
+            todos = self.db_manager.get_all_todos()
+            
+            # 按四象限和GTD标签分类显示
+            for todo in todos:
+                try:
+                    # 安全地从字典中获取需要的字段
+                    if isinstance(todo, dict):
+                        todo_id = todo.get('id', '')
+                        title = todo.get('title', '')
+                        project = todo.get('project', '') or ''
+                        due_date = todo.get('due_date', '') or ''
+                        status = todo.get('status', '')
+                        priority = todo.get('priority', 4)
+                        gtd_tag = todo.get('gtd_tag', 'inbox')
+                    else:
+                        # 如果是其他格式，跳过这个条目
+                        print(f"警告：数据格式不符合预期: {type(todo)}")
+                        continue
+                    
+                    # 确定树形视图
+                    tree_key = (priority, gtd_tag)
+                    if tree_key in self.integrated_trees:
+                        tree = self.integrated_trees[tree_key]
+                        
+                        # 显示状态图标
+                        status_icon = "✓" if status == "completed" else "○"
+                        
+                        # 插入项目
+                        tree.insert("", "end", values=(status_icon, title, project, due_date), tags=(todo_id,))
+                        
+                        # 设置已完成任务的样式
+                        if status == "completed":
+                            item = tree.get_children()[-1]
+                            tree.set(item, "status", "✓")
+                            
+                except Exception as e:
+                    print(f"处理待办事项时出错: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"刷新四象限视图时出错: {e}")
     
     def on_todo_double_click(self, event, tree):
         """处理待办事项双击事件"""

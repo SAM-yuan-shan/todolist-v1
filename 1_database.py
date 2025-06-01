@@ -15,7 +15,9 @@ class DatabaseManager:
     
     def init_database(self):
         """初始化SQLite数据库"""
-        self.conn = sqlite3.connect(self.db_name)
+        # 设置check_same_thread=False以支持多线程访问
+        self.conn = sqlite3.connect(self.db_name, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row  # 使结果可以按列名访问
         self.cursor = self.conn.cursor()
         
         # 创建待办事项表
@@ -61,13 +63,32 @@ class DatabaseManager:
         return self.cursor.lastrowid
     
     def get_all_todos(self):
-        """获取所有待办事项"""
+        """获取所有待办事项的详细信息"""
         self.cursor.execute('''
-            SELECT id, title, project, due_date, status, priority, gtd_tag 
+            SELECT id, title, description, project, priority, urgency, importance, 
+                   gtd_tag, due_date, reminder_time, status, created_at, completed_at
             FROM todos 
-            ORDER BY due_date ASC
+            ORDER BY 
+                CASE status 
+                    WHEN 'pending' THEN 1 
+                    WHEN 'completed' THEN 2 
+                    ELSE 3 
+                END,
+                priority ASC,
+                due_date ASC,
+                created_at DESC
         ''')
-        return self.cursor.fetchall()
+        
+        # 转换为字典列表以便于处理
+        columns = [desc[0] for desc in self.cursor.description]
+        rows = self.cursor.fetchall()
+        
+        todos = []
+        for row in rows:
+            todo_dict = dict(zip(columns, row))
+            todos.append(todo_dict)
+        
+        return todos
     
     def get_todo_by_id(self, todo_id):
         """根据ID获取待办事项"""
@@ -103,8 +124,13 @@ class DatabaseManager:
     
     def delete_todo(self, todo_id):
         """删除待办事项"""
-        self.cursor.execute('DELETE FROM todos WHERE id = ?', (todo_id,))
-        self.conn.commit()
+        try:
+            self.cursor.execute('DELETE FROM todos WHERE id = ?', (todo_id,))
+            self.conn.commit()
+            return self.cursor.rowcount > 0  # 返回是否删除成功
+        except Exception as e:
+            print(f"删除待办事项失败: {e}")
+            return False
     
     def get_pending_reminders(self, current_time):
         """获取需要提醒的待办事项"""
@@ -166,6 +192,25 @@ class DatabaseManager:
             ORDER BY due_date, priority
         ''', (start_date, end_date))
         return self.cursor.fetchall()
+    
+    def update_todo_status(self, todo_id, status):
+        """更新待办事项状态"""
+        try:
+            if status == 'completed':
+                completed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.cursor.execute('''
+                    UPDATE todos SET status = ?, completed_at = ? WHERE id = ?
+                ''', (status, completed_at, todo_id))
+            else:
+                self.cursor.execute('''
+                    UPDATE todos SET status = ? WHERE id = ?
+                ''', (status, todo_id))
+            
+            self.conn.commit()
+            return self.cursor.rowcount > 0  # 返回是否更新成功
+        except Exception as e:
+            print(f"更新待办事项状态失败: {e}")
+            return False
     
     def close(self):
         """关闭数据库连接"""

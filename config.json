@@ -1,0 +1,43 @@
+{
+    "database": {
+        "path": "./todo.db",
+        "backup_path": "./backups/",
+        "auto_backup": true,
+        "backup_interval_hours": 24
+    },
+    "ai_assistant": {
+        "api_key": "sk-7bdfa6b3c0224052b63089471c5448f8",
+        "api_url": "https://api.deepseek.com/v1/chat/completions",
+        "model": "deepseek-chat",
+        "temperature": 0.7,
+        "max_tokens": 1000,
+        "offline_mode": false
+    },
+    "ui": {
+        "theme": "default",
+        "window_size": {
+            "width": 1200,
+            "height": 800
+        },
+        "auto_save": true
+    },
+    "mcp": {
+        "enabled": true,
+        "sqlite_server": {
+            "enabled": true,
+            "tools": [
+                "read_query",
+                "write_query",
+                "create_table",
+                "list_tables",
+                "describe_table",
+                "append_insight"
+            ]
+        }
+    },
+    "first_run": false,
+    "version": "1.0.0",
+    "test": {
+        "value": "test_data"
+    }
+}

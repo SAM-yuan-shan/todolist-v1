@@ -17,6 +17,10 @@ quadrant_module = importlib.import_module('5_quadrant_view')
 summary_module = importlib.import_module('6_summary_view')
 project_module = importlib.import_module('7_project_view')
 
+# 导入新的AI功能模块
+ai_assistant_module = importlib.import_module('8_ai_assistant')
+config_module = importlib.import_module('9_config_manager')
+
 DatabaseManager = database_module.DatabaseManager
 ReminderService = reminder_module.ReminderService
 UIComponents = ui_module.UIComponents
@@ -24,27 +28,44 @@ CalendarView = calendar_module.CalendarView
 QuadrantView = quadrant_module.QuadrantView
 SummaryView = summary_module.SummaryView
 ProjectView = project_module.ProjectView
+AIAssistant = ai_assistant_module.AIAssistant
+ConfigManager = config_module.ConfigManager
 
 class TodoApp:
     def __init__(self):
         """初始化主应用程序"""
+        # 初始化配置管理器
+        self.config_manager = ConfigManager()
+        
+        # 显示首次运行对话框（如果是第一次运行）
+        if self.config_manager.is_first_run():
+            self.config_manager.show_first_run_dialog()
+            self.config_manager.set_first_run_complete()
+        
         # 创建主窗口 - 紫色主题
         self.root = ttk_bs.Window(themename="vapor")
         self.root.title("智能待办事项管理器")
-        self.root.geometry("1400x900")
+        
+        # 从配置获取窗口大小
+        window_config = self.config_manager.get('ui.window_size', {'width': 1400, 'height': 900})
+        self.root.geometry(f"{window_config['width']}x{window_config['height']}")
         self.root.minsize(1200, 700)
         
         # 设置紫色渐变背景
         self.setup_gradient_background()
         
         # 初始化各个管理器
-        self.db_manager = DatabaseManager()
+        db_path = self.config_manager.get_database_path()
+        self.db_manager = DatabaseManager(db_path)
         self.reminder_service = ReminderService(self.db_manager)
         self.ui_components = UIComponents(self.db_manager)
         self.calendar_view = CalendarView(self.db_manager, self.ui_components)
         self.quadrant_view = QuadrantView(self.db_manager, self.ui_components)
         self.summary_view = SummaryView(self.db_manager, self.ui_components)
         self.project_view = ProjectView(self.db_manager, self.ui_components)
+        
+        # 初始化AI助手
+        self.ai_assistant = AIAssistant(self.db_manager, self.ui_components, self.config_manager)
         
         # 创建界面
         self.create_widgets()
@@ -87,7 +108,9 @@ class TodoApp:
         self.create_main_view_tab()
         self.create_calendar_tab()
         self.create_project_tab()
+        self.create_ai_assistant_tab()  # 新增AI助手标签页
         self.create_summary_tab()
+        self.create_settings_tab()  # 新增设置标签页
     
     def create_main_view_tab(self):
         """创建主视图标签页"""
@@ -352,10 +375,210 @@ class TodoApp:
         project_tab = self.project_view.create_project_tab(self.notebook)
         self.notebook.add(project_tab, text="项目汇总")
     
+    def create_ai_assistant_tab(self):
+        """创建AI助手标签页"""
+        ai_tab = ttk_bs.Frame(self.notebook)
+        self.notebook.add(ai_tab, text="AI助手")
+        
+        # 创建AI助手面板
+        self.ai_assistant.create_ai_panel(ai_tab)
+    
     def create_summary_tab(self):
         """创建汇总标签页"""
         summary_tab = self.summary_view.create_summary_tab(self.notebook)
         self.notebook.add(summary_tab, text="统计汇总")
+    
+    def create_settings_tab(self):
+        """创建设置标签页"""
+        settings_tab = ttk_bs.Frame(self.notebook)
+        self.notebook.add(settings_tab, text="设置")
+        
+        # 创建设置内容
+        self.create_settings_content(settings_tab)
+    
+    def create_settings_content(self, parent):
+        """创建设置内容"""
+        # 主框架
+        main_frame = ttk_bs.Frame(parent, style='Gradient.TFrame')
+        main_frame.pack(fill=BOTH, expand=True, padx=15, pady=15)
+        
+        # 设置标题
+        title_label = ttk_bs.Label(
+            main_frame,
+            text="应用程序设置",
+            font=("Microsoft YaHei", 18, "bold"),
+            bootstyle="light"
+        )
+        title_label.pack(pady=(0, 20))
+        
+        # 创建滚动区域
+        settings_container = ttk_bs.Frame(main_frame)
+        settings_container.pack(fill=BOTH, expand=True)
+        
+        # 数据库设置区域
+        db_frame = ttk_bs.LabelFrame(
+            settings_container,
+            text="数据库设置",
+            padding=15,
+            bootstyle="primary"
+        )
+        db_frame.pack(fill=X, pady=(0, 15))
+        
+        # 数据库路径显示
+        db_path_frame = ttk_bs.Frame(db_frame)
+        db_path_frame.pack(fill=X, pady=(0, 10))
+        
+        ttk_bs.Label(
+            db_path_frame,
+            text="当前数据库路径:",
+            font=("Microsoft YaHei", 10, "bold")
+        ).pack(anchor=W)
+        
+        db_path_label = ttk_bs.Label(
+            db_path_frame,
+            text=self.config_manager.get_database_path(),
+            font=("Microsoft YaHei", 9),
+            foreground="#6c757d"
+        )
+        db_path_label.pack(anchor=W, pady=(2, 0))
+        
+        # 数据库操作按钮
+        db_buttons_frame = ttk_bs.Frame(db_frame)
+        db_buttons_frame.pack(fill=X)
+        
+        backup_btn = ttk_bs.Button(
+            db_buttons_frame,
+            text="创建备份",
+            command=self.create_database_backup,
+            bootstyle="success-outline",
+            width=12
+        )
+        backup_btn.pack(side=LEFT, padx=(0, 10))
+        
+        info_btn = ttk_bs.Button(
+            db_buttons_frame,
+            text="数据库信息",
+            command=self.show_database_info,
+            bootstyle="info-outline",
+            width=12
+        )
+        info_btn.pack(side=LEFT)
+        
+        # AI设置区域
+        ai_frame = ttk_bs.LabelFrame(
+            settings_container,
+            text="AI助手设置",
+            padding=15,
+            bootstyle="success"
+        )
+        ai_frame.pack(fill=X, pady=(0, 15))
+        
+        # API Key设置
+        api_frame = ttk_bs.Frame(ai_frame)
+        api_frame.pack(fill=X, pady=(0, 10))
+        
+        ttk_bs.Label(
+            api_frame,
+            text="DeepSeek API Key:",
+            font=("Microsoft YaHei", 10, "bold")
+        ).pack(anchor=W)
+        
+        self.api_key_entry = ttk_bs.Entry(
+            api_frame,
+            show="*",
+            font=("Microsoft YaHei", 9),
+            width=50
+        )
+        self.api_key_entry.pack(fill=X, pady=(5, 0))
+        self.api_key_entry.insert(0, self.config_manager.get_api_key())
+        
+        # AI按钮
+        ai_buttons_frame = ttk_bs.Frame(ai_frame)
+        ai_buttons_frame.pack(fill=X, pady=(10, 0))
+        
+        save_api_btn = ttk_bs.Button(
+            ai_buttons_frame,
+            text="保存API配置",
+            command=self.save_api_settings,
+            bootstyle="primary-outline",
+            width=12
+        )
+        save_api_btn.pack(side=LEFT, padx=(0, 10))
+        
+        test_api_btn = ttk_bs.Button(
+            ai_buttons_frame,
+            text="测试连接",
+            command=self.test_api_connection,
+            bootstyle="info-outline",
+            width=12
+        )
+        test_api_btn.pack(side=LEFT)
+        
+        # 主题设置区域
+        theme_frame = ttk_bs.LabelFrame(
+            settings_container,
+            text="主题设置",
+            padding=15,
+            bootstyle="warning"
+        )
+        theme_frame.pack(fill=X)
+        
+        ttk_bs.Label(
+            theme_frame,
+            text="当前使用紫色渐变主题（vapor）",
+            font=("Microsoft YaHei", 10)
+        ).pack(anchor=W)
+    
+    def create_database_backup(self):
+        """创建数据库备份"""
+        try:
+            # 这里可以调用数据库管理器的备份方法
+            success = self.db_manager.create_backup()
+            if success:
+                messagebox.showinfo("备份成功", "数据库备份创建成功！")
+            else:
+                messagebox.showerror("备份失败", "创建数据库备份失败！")
+        except Exception as e:
+            messagebox.showerror("错误", f"备份过程中出错：{str(e)}")
+    
+    def show_database_info(self):
+        """显示数据库信息"""
+        try:
+            config_module = importlib.import_module('9_config_manager')
+            config_module.show_database_info_dialog(self.config_manager, self.root)
+        except Exception as e:
+            messagebox.showerror("错误", f"显示数据库信息时出错：{str(e)}")
+    
+    def save_api_settings(self):
+        """保存API设置"""
+        try:
+            api_key = self.api_key_entry.get().strip()
+            if api_key and api_key != "your_api_key_here":
+                self.config_manager.set_api_key(api_key)
+                # 更新AI助手的API密钥
+                self.ai_assistant.ai_core.update_api_key(api_key)
+                messagebox.showinfo("保存成功", "API配置已保存！")
+            else:
+                messagebox.showwarning("无效输入", "请输入有效的API Key！")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存设置时出错：{str(e)}")
+    
+    def test_api_connection(self):
+        """测试API连接"""
+        try:
+            # 先保存当前API密钥
+            api_key = self.api_key_entry.get().strip()
+            if api_key and api_key != "your_api_key_here":
+                self.ai_assistant.ai_core.update_api_key(api_key)
+            
+            # 测试连接
+            success, message = self.ai_assistant.ai_core.test_api_connection()
+            if success:
+                messagebox.showinfo("连接成功", message)
+            else:
+                messagebox.showerror("连接失败", message)
+        except Exception as e:
+            messagebox.showerror("错误", f"测试连接时出错：{str(e)}")
     
     def refresh_all_views(self):
         """刷新所有视图"""
@@ -380,6 +603,10 @@ class TodoApp:
         # 刷新完整汇总面板
         if hasattr(self.summary_view, 'full_summary_labels') and self.summary_view.full_summary_labels:
             self.summary_view.refresh_full_summary()
+        
+        # 刷新AI助手的上下文
+        if hasattr(self.ai_assistant, 'refresh_context'):
+            self.ai_assistant.refresh_context()
     
     def refresh_summary(self):
         """刷新简单汇总统计"""
@@ -405,6 +632,14 @@ class TodoApp:
             self.reminder_service.stop_reminder_thread()
             # 关闭数据库连接
             self.db_manager.close()
+            # 保存窗口设置
+            try:
+                window_geometry = self.root.geometry()
+                width, height = window_geometry.split('x')[0], window_geometry.split('x')[1].split('+')[0]
+                self.config_manager.set('ui.window_size.width', int(width))
+                self.config_manager.set('ui.window_size.height', int(height))
+            except:
+                pass
 
 if __name__ == "__main__":
     app = TodoApp()
