@@ -27,6 +27,7 @@ class DatabaseManager:
                 title TEXT NOT NULL,
                 description TEXT,
                 project TEXT,           -- 项目字段
+                responsibility TEXT,    -- 责任级别字段
                 priority INTEGER,       -- 1: 重要紧急, 2: 重要不紧急, 3: 不重要紧急, 4: 不重要不紧急
                 urgency INTEGER,        -- 1: 紧急, 0: 不紧急
                 importance INTEGER,     -- 1: 重要, 0: 不重要
@@ -39,24 +40,87 @@ class DatabaseManager:
             )
         ''')
         
+        # 创建AI对话历史表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_input TEXT NOT NULL,
+                ai_response TEXT NOT NULL,
+                context_summary TEXT,      -- 对话上下文摘要
+                action_taken TEXT,         -- 执行的操作类型
+                related_todo_ids TEXT,     -- 相关的待办事项ID(JSON格式)
+                session_id TEXT,           -- 会话ID，用于关联连续对话
+                created_at TEXT,
+                conversation_type TEXT DEFAULT 'general'  -- general, task_management, query, etc.
+            )
+        ''')
+        
+        # 创建用户偏好和学习记录表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                preference_type TEXT NOT NULL,  -- work_pattern, priority_style, communication_style, etc.
+                preference_key TEXT NOT NULL,
+                preference_value TEXT NOT NULL,
+                confidence_score REAL DEFAULT 0.5,  -- 置信度分数 0-1
+                learned_from TEXT,              -- 从哪次交互中学到的
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
+        
+        # 创建AI记忆关键词表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_memory_keywords (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyword TEXT NOT NULL,
+                category TEXT,              -- project, person, concept, etc.
+                frequency INTEGER DEFAULT 1,
+                last_mentioned TEXT,        -- 最后提及时间
+                context TEXT,               -- 相关上下文
+                importance_score REAL DEFAULT 0.5,
+                created_at TEXT
+            )
+        ''')
+        
+        # 创建任务模板表（基于用户习惯学习）
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS task_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_name TEXT NOT NULL,
+                title_pattern TEXT,
+                default_project TEXT,
+                default_priority INTEGER,
+                default_gtd_tag TEXT,
+                usage_count INTEGER DEFAULT 0,
+                success_rate REAL DEFAULT 0.0,  -- 模板使用成功率
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
+        
         # 检查是否需要添加项目列
         self.cursor.execute("PRAGMA table_info(todos)")
         columns = [column[1] for column in self.cursor.fetchall()]
         if 'project' not in columns:
             self.cursor.execute('ALTER TABLE todos ADD COLUMN project TEXT')
         
+        # 检查是否需要添加责任级别列
+        if 'responsibility' not in columns:
+            self.cursor.execute('ALTER TABLE todos ADD COLUMN responsibility TEXT DEFAULT "owner"')
+        
         self.conn.commit()
     
-    def add_todo(self, title, description, project, priority, urgency, importance, 
+    def add_todo(self, title, description, project, responsibility, priority, urgency, importance, 
                  gtd_tag, due_date, reminder_time):
         """添加新的待办事项"""
         created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         self.cursor.execute('''
-            INSERT INTO todos (title, description, project, priority, urgency, importance, 
+            INSERT INTO todos (title, description, project, responsibility, priority, urgency, importance, 
                              gtd_tag, due_date, reminder_time, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (title, description, project, priority, urgency, importance, gtd_tag, 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (title, description, project, responsibility, priority, urgency, importance, gtd_tag, 
               due_date, reminder_time, created_at))
         
         self.conn.commit()
@@ -65,7 +129,7 @@ class DatabaseManager:
     def get_all_todos(self):
         """获取所有待办事项的详细信息"""
         self.cursor.execute('''
-            SELECT id, title, description, project, priority, urgency, importance, 
+            SELECT id, title, description, project, responsibility, priority, urgency, importance, 
                    gtd_tag, due_date, reminder_time, status, created_at, completed_at
             FROM todos 
             ORDER BY 
@@ -215,4 +279,187 @@ class DatabaseManager:
     def close(self):
         """关闭数据库连接"""
         if self.conn:
-            self.conn.close() 
+            self.conn.close()
+    
+    # AI记忆功能相关方法
+    def save_ai_conversation(self, user_input, ai_response, context_summary=None, 
+                           action_taken=None, related_todo_ids=None, session_id=None, 
+                           conversation_type='general'):
+        """保存AI对话历史"""
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        self.cursor.execute('''
+            INSERT INTO ai_conversations 
+            (user_input, ai_response, context_summary, action_taken, related_todo_ids, 
+             session_id, created_at, conversation_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_input, ai_response, context_summary, action_taken, related_todo_ids, 
+              session_id, created_at, conversation_type))
+        
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_recent_conversations(self, limit=10, session_id=None):
+        """获取最近的对话历史"""
+        if session_id:
+            self.cursor.execute('''
+                SELECT user_input, ai_response, action_taken, created_at 
+                FROM ai_conversations 
+                WHERE session_id = ?
+                ORDER BY created_at DESC LIMIT ?
+            ''', (session_id, limit))
+        else:
+            self.cursor.execute('''
+                SELECT user_input, ai_response, action_taken, created_at 
+                FROM ai_conversations 
+                ORDER BY created_at DESC LIMIT ?
+            ''', (limit,))
+        return self.cursor.fetchall()
+    
+    def save_user_preference(self, preference_type, preference_key, preference_value, 
+                           confidence_score=0.5, learned_from=None):
+        """保存或更新用户偏好"""
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 检查是否已存在相同的偏好
+        self.cursor.execute('''
+            SELECT id FROM user_preferences 
+            WHERE preference_type = ? AND preference_key = ?
+        ''', (preference_type, preference_key))
+        
+        existing = self.cursor.fetchone()
+        
+        if existing:
+            # 更新现有偏好
+            self.cursor.execute('''
+                UPDATE user_preferences 
+                SET preference_value = ?, confidence_score = ?, learned_from = ?, updated_at = ?
+                WHERE preference_type = ? AND preference_key = ?
+            ''', (preference_value, confidence_score, learned_from, created_at, preference_type, preference_key))
+        else:
+            # 创建新偏好
+            self.cursor.execute('''
+                INSERT INTO user_preferences 
+                (preference_type, preference_key, preference_value, confidence_score, learned_from, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (preference_type, preference_key, preference_value, confidence_score, learned_from, created_at, created_at))
+        
+        self.conn.commit()
+    
+    def get_user_preferences(self, preference_type=None):
+        """获取用户偏好"""
+        if preference_type:
+            self.cursor.execute('''
+                SELECT preference_key, preference_value, confidence_score 
+                FROM user_preferences 
+                WHERE preference_type = ?
+                ORDER BY confidence_score DESC
+            ''', (preference_type,))
+        else:
+            self.cursor.execute('''
+                SELECT preference_type, preference_key, preference_value, confidence_score 
+                FROM user_preferences 
+                ORDER BY preference_type, confidence_score DESC
+            ''')
+        return self.cursor.fetchall()
+    
+    def update_keyword_memory(self, keyword, category=None, context=None):
+        """更新关键词记忆"""
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 检查关键词是否已存在
+        self.cursor.execute('SELECT id, frequency FROM ai_memory_keywords WHERE keyword = ?', (keyword,))
+        existing = self.cursor.fetchone()
+        
+        if existing:
+            # 更新频率和最后提及时间
+            new_frequency = existing[1] + 1
+            self.cursor.execute('''
+                UPDATE ai_memory_keywords 
+                SET frequency = ?, last_mentioned = ?, context = ?
+                WHERE keyword = ?
+            ''', (new_frequency, current_time, context, keyword))
+        else:
+            # 创建新关键词记录
+            self.cursor.execute('''
+                INSERT INTO ai_memory_keywords 
+                (keyword, category, frequency, last_mentioned, context, created_at)
+                VALUES (?, ?, 1, ?, ?, ?)
+            ''', (keyword, category, current_time, context, current_time))
+        
+        self.conn.commit()
+    
+    def get_important_keywords(self, limit=20):
+        """获取重要关键词"""
+        self.cursor.execute('''
+            SELECT keyword, category, frequency, importance_score, context 
+            FROM ai_memory_keywords 
+            ORDER BY frequency DESC, importance_score DESC 
+            LIMIT ?
+        ''', (limit,))
+        return self.cursor.fetchall()
+    
+    def save_task_template(self, template_name, title_pattern, default_project=None, 
+                         default_priority=None, default_gtd_tag=None):
+        """保存任务模板"""
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        self.cursor.execute('''
+            INSERT INTO task_templates 
+            (template_name, title_pattern, default_project, default_priority, default_gtd_tag, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (template_name, title_pattern, default_project, default_priority, default_gtd_tag, created_at, created_at))
+        
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_task_templates(self):
+        """获取任务模板"""
+        self.cursor.execute('''
+            SELECT template_name, title_pattern, default_project, default_priority, default_gtd_tag, usage_count, success_rate 
+            FROM task_templates 
+            ORDER BY usage_count DESC, success_rate DESC
+        ''')
+        return self.cursor.fetchall()
+    
+    def update_template_usage(self, template_name, success=True):
+        """更新模板使用统计"""
+        # 获取当前统计
+        self.cursor.execute('SELECT usage_count, success_rate FROM task_templates WHERE template_name = ?', (template_name,))
+        result = self.cursor.fetchone()
+        
+        if result:
+            current_usage, current_success_rate = result
+            new_usage = current_usage + 1
+            
+            # 计算新的成功率
+            if success:
+                new_success_rate = (current_success_rate * current_usage + 1) / new_usage
+            else:
+                new_success_rate = (current_success_rate * current_usage) / new_usage
+            
+            self.cursor.execute('''
+                UPDATE task_templates 
+                SET usage_count = ?, success_rate = ?, updated_at = ?
+                WHERE template_name = ?
+            ''', (new_usage, new_success_rate, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), template_name))
+            
+            self.conn.commit()
+    
+    def get_ai_context_for_user(self):
+        """获取用户的AI上下文信息（用于个性化响应）"""
+        context = {}
+        
+        # 获取最近的偏好
+        preferences = self.get_user_preferences()
+        context['preferences'] = {f"{p[0]}_{p[1]}": p[2] for p in preferences}
+        
+        # 获取常用关键词
+        keywords = self.get_important_keywords(10)
+        context['important_keywords'] = [k[0] for k in keywords]
+        
+        # 获取最近对话
+        recent_conversations = self.get_recent_conversations(5)
+        context['recent_context'] = [{"input": c[0], "action": c[2]} for c in recent_conversations]
+        
+        return context 

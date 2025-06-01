@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 class TaskParser:
     """任务解析器"""
     
-    def __init__(self):
+    def __init__(self, role_manager=None):
         """初始化任务解析器"""
-        pass
+        self.role_manager = role_manager
     
     def parse_task_from_input(self, user_input):
         """从用户输入中解析任务信息"""
@@ -32,15 +32,18 @@ class TaskParser:
             task_info['urgency'] = 1 if urgency else 0        # 添加urgency字段
             task_info['priority'] = self._calculate_priority(importance, urgency)
             
-            # 4. 提取项目信息
+            # 4. 提取项目信息（考虑用户默认项目）
             task_info['project'] = self._extract_project(user_input)
             
-            # 5. 提取时间信息
+            # 5. 设置默认责任级别
+            task_info['responsibility'] = self._get_default_responsibility()
+            
+            # 6. 提取时间信息
             due_date, reminder_time = self._extract_time_info(user_input)
             task_info['due_date'] = due_date
             task_info['reminder_time'] = reminder_time
             
-            # 6. 生成任务描述
+            # 7. 生成任务描述
             task_info['description'] = self._generate_description(user_input, task_info)
             
             return task_info
@@ -156,20 +159,61 @@ class TaskParser:
         """提取项目信息"""
         text = user_input.lower()
         
-        # 项目关键词映射
-        project_keywords = {
-            '工作': ['工作', '公司', '办公', '会议', '汇报', '报告', '项目', '业务', '客户', '同事'],
-            '学习': ['学习', '课程', '阅读', '研究', '书', '教程', '培训', '考试', '复习'],
-            '生活': ['买', '购', '购买', '购物', '家', '家庭', '健康', '运动', '锻炼', '医院', '体检'],
-            '个人': ['个人', '爱好', '兴趣', '娱乐', '游戏', '电影', '音乐', '旅行', '旅游']
-        }
-        
-        # 检查项目关键词
-        for project, keywords in project_keywords.items():
-            if any(keyword in text for keyword in keywords):
-                return project
-        
-        return '默认'  # 默认项目
+        # 如果有角色管理器，优先使用其项目分类
+        if self.role_manager:
+            projects = self.role_manager.get_available_projects()
+            
+            # 检查用户输入是否直接提到某个项目
+            for project in projects:
+                project_keywords = [project['name'].lower(), project['id'].lower()]
+                if project['description']:
+                    project_keywords.extend(project['description'].lower().split())
+                
+                if any(keyword in text for keyword in project_keywords if len(keyword) > 1):
+                    return project['id']
+            
+            # 基于内容智能匹配项目
+            project_keywords = {
+                'work': ['工作', '公司', '办公', '会议', '汇报', '报告', '项目', '业务', '客户', '同事', '开发', '编程'],
+                'personal': ['个人', '私人', '自己', '生活'],
+                'study': ['学习', '课程', '阅读', '研究', '书', '教程', '培训', '考试', '复习', '技能'],
+                'health': ['健康', '运动', '锻炼', '医院', '体检', '养生', '跑步', '健身'],
+                'family': ['家庭', '家人', '父母', '孩子', '家事', '家务'],
+                'finance': ['理财', '投资', '财务', '钱', '账单', '支付', '银行'],
+                'hobby': ['爱好', '兴趣', '娱乐', '游戏', '电影', '音乐', '绘画'],
+                'social': ['社交', '朋友', '聚会', '约会', '活动'],
+                'travel': ['旅行', '旅游', '出差', '度假', '机票', '酒店'],
+            }
+            
+            # 检查项目关键词
+            for project_id, keywords in project_keywords.items():
+                if any(keyword in text for keyword in keywords):
+                    return project_id
+            
+            # 返回用户默认项目
+            return self.role_manager.profile.get('default_project', 'work')
+        else:
+            # 没有角色管理器时的原始逻辑
+            project_keywords = {
+                'work': ['工作', '公司', '办公', '会议', '汇报', '报告', '项目', '业务', '客户', '同事'],
+                'study': ['学习', '课程', '阅读', '研究', '书', '教程', '培训', '考试', '复习'],
+                'personal': ['买', '购', '购买', '购物', '家', '家庭', '健康', '运动', '锻炼', '医院', '体检'],
+                'hobby': ['个人', '爱好', '兴趣', '娱乐', '游戏', '电影', '音乐', '旅行', '旅游']
+            }
+            
+            # 检查项目关键词
+            for project, keywords in project_keywords.items():
+                if any(keyword in text for keyword in keywords):
+                    return project
+            
+            return 'work'  # 默认项目
+    
+    def _get_default_responsibility(self):
+        """获取默认责任级别"""
+        if self.role_manager:
+            return self.role_manager.profile.get('default_responsibility', 'owner')
+        else:
+            return 'owner'
     
     def _extract_time_info(self, user_input):
         """提取时间信息"""

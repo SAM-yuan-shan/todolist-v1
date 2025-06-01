@@ -19,7 +19,8 @@
             "width": 1200,
             "height": 800
         },
-        "auto_save": true
+        "auto_save": true,
+        "skip_role_config": true
     },
     "mcp": {
         "enabled": true,

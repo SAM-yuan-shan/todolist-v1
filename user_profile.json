@@ -1,0 +1,18 @@
+{
+    "user_info": {
+        "name": "山河",
+        "role_id": "student",
+        "custom_role": "",
+        "department": "",
+        "company": ""
+    },
+    "default_project": "study",
+    "default_responsibility": "owner",
+    "custom_roles": [],
+    "custom_projects": [],
+    "ai_context": {
+        "personality": "professional",
+        "communication_style": "formal",
+        "priority_preference": "urgent_important"
+    }
+}

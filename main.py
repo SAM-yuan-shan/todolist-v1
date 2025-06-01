@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, BOTH, LEFT, RIGHT, X, Y, W, E, N, S, TOP
 import ttkbootstrap as ttk_bs
 from ttkbootstrap.constants import *
 import importlib
+import os
 
 # 动态导入各个功能模块
 database_module = importlib.import_module('1_database')
@@ -21,6 +22,9 @@ project_module = importlib.import_module('7_project_view')
 ai_assistant_module = importlib.import_module('8_ai_assistant')
 config_module = importlib.import_module('9_config_manager')
 
+# 导入角色管理模块
+role_module = importlib.import_module('role_manager')
+
 DatabaseManager = database_module.DatabaseManager
 ReminderService = reminder_module.ReminderService
 UIComponents = ui_module.UIComponents
@@ -30,12 +34,16 @@ SummaryView = summary_module.SummaryView
 ProjectView = project_module.ProjectView
 AIAssistant = ai_assistant_module.AIAssistant
 ConfigManager = config_module.ConfigManager
+RoleManager = role_module.RoleManager
 
 class TodoApp:
     def __init__(self):
         """初始化主应用程序"""
         # 初始化配置管理器
         self.config_manager = ConfigManager()
+        
+        # 初始化角色管理器
+        self.role_manager = RoleManager()
         
         # 显示首次运行对话框（如果是第一次运行）
         if self.config_manager.is_first_run():
@@ -58,14 +66,14 @@ class TodoApp:
         db_path = self.config_manager.get_database_path()
         self.db_manager = DatabaseManager(db_path)
         self.reminder_service = ReminderService(self.db_manager)
-        self.ui_components = UIComponents(self.db_manager)
+        self.ui_components = UIComponents(self.db_manager, self.role_manager)  # 传递角色管理器
         self.calendar_view = CalendarView(self.db_manager, self.ui_components)
         self.quadrant_view = QuadrantView(self.db_manager, self.ui_components)
         self.summary_view = SummaryView(self.db_manager, self.ui_components)
         self.project_view = ProjectView(self.db_manager, self.ui_components)
         
-        # 初始化AI助手
-        self.ai_assistant = AIAssistant(self.db_manager, self.ui_components, self.config_manager)
+        # 初始化AI助手，传递角色管理器
+        self.ai_assistant = AIAssistant(self.db_manager, self.ui_components, self.config_manager, self.role_manager)
         
         # 创建界面
         self.create_widgets()
@@ -75,6 +83,9 @@ class TodoApp:
         
         # 加载数据
         self.refresh_all_views()
+        
+        # 检查用户角色配置（在主窗口创建后）
+        self.root.after(500, self.check_role_configuration)
     
     def setup_gradient_background(self):
         """设置紫色渐变背景"""
@@ -397,137 +408,138 @@ class TodoApp:
         self.create_settings_content(settings_tab)
     
     def create_settings_content(self, parent):
-        """创建设置内容"""
-        # 主框架
-        main_frame = ttk_bs.Frame(parent, style='Gradient.TFrame')
-        main_frame.pack(fill=BOTH, expand=True, padx=15, pady=15)
-        
-        # 设置标题
-        title_label = ttk_bs.Label(
-            main_frame,
-            text="应用程序设置",
-            font=("Microsoft YaHei", 18, "bold"),
-            bootstyle="light"
+        """创建设置页面内容"""
+        # 创建滚动框架
+        canvas = tk.Canvas(parent, bg='#2d1b5e')
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        title_label.pack(pady=(0, 20))
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # AI配置部分
+        ai_frame = ttk.LabelFrame(scrollable_frame, text="AI助手配置", padding=20)
+        ai_frame.pack(fill="x", padx=20, pady=10)
+
+        # API设置
+        ttk.Label(ai_frame, text="DeepSeek API Key:", font=('Arial', 12, 'bold')).pack(anchor="w")
         
-        # 创建滚动区域
-        settings_container = ttk_bs.Frame(main_frame)
-        settings_container.pack(fill=BOTH, expand=True)
+        api_frame = ttk.Frame(ai_frame)
+        api_frame.pack(fill="x", pady=(5, 10))
         
-        # 数据库设置区域
-        db_frame = ttk_bs.LabelFrame(
-            settings_container,
-            text="数据库设置",
-            padding=15,
-            bootstyle="primary"
-        )
-        db_frame.pack(fill=X, pady=(0, 15))
+        self.api_key_var = tk.StringVar()
+        if self.config_manager:
+            self.api_key_var.set(self.config_manager.get_api_key())
         
-        # 数据库路径显示
-        db_path_frame = ttk_bs.Frame(db_frame)
-        db_path_frame.pack(fill=X, pady=(0, 10))
+        api_entry = ttk.Entry(api_frame, textvariable=self.api_key_var, show="*", width=50)
+        api_entry.pack(side="left", padx=(0, 10))
         
-        ttk_bs.Label(
-            db_path_frame,
-            text="当前数据库路径:",
-            font=("Microsoft YaHei", 10, "bold")
-        ).pack(anchor=W)
+        ttk.Button(api_frame, text="保存", command=self.save_api_settings).pack(side="left", padx=(0, 5))
+        ttk.Button(api_frame, text="测试连接", command=self.test_api_connection).pack(side="left")
+
+        # MCP功能开关
+        self.mcp_enabled_var = tk.BooleanVar()
+        if self.config_manager:
+            self.mcp_enabled_var.set(self.config_manager.is_mcp_enabled())
         
-        db_path_label = ttk_bs.Label(
-            db_path_frame,
-            text=self.config_manager.get_database_path(),
-            font=("Microsoft YaHei", 9),
-            foreground="#6c757d"
-        )
-        db_path_label.pack(anchor=W, pady=(2, 0))
+        mcp_cb = ttk.Checkbutton(ai_frame, text="启用MCP功能 (高级SQL查询)", 
+                                variable=self.mcp_enabled_var)
+        mcp_cb.pack(anchor="w", pady=5)
+
+        # AI记忆管理部分
+        memory_frame = ttk.LabelFrame(scrollable_frame, text="AI记忆管理", padding=20)
+        memory_frame.pack(fill="x", padx=20, pady=10)
+
+        # 记忆统计信息
+        stats_frame = ttk.Frame(memory_frame)
+        stats_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(stats_frame, text="学习统计", font=('Arial', 12, 'bold')).pack(anchor="w")
+        
+        self.memory_stats_text = tk.Text(stats_frame, height=8, width=80, state='disabled',
+                                        bg='#1e1e1e', fg='white', font=('Consolas', 10))
+        self.memory_stats_text.pack(fill="x", pady=5)
+
+        # 记忆管理按钮
+        memory_buttons_frame = ttk.Frame(memory_frame)
+        memory_buttons_frame.pack(fill="x", pady=5)
+
+        ttk.Button(memory_buttons_frame, text="刷新记忆统计", 
+                  command=self.refresh_memory_stats).pack(side="left", padx=(0, 10))
+        ttk.Button(memory_buttons_frame, text="导出对话历史", 
+                  command=self.export_conversation_history).pack(side="left", padx=(0, 10))
+        ttk.Button(memory_buttons_frame, text="清除学习数据", 
+                  command=self.clear_learning_data).pack(side="left")
+
+        # 用户偏好展示
+        pref_frame = ttk.LabelFrame(memory_frame, text="用户偏好", padding=10)
+        pref_frame.pack(fill="x", pady=10)
+
+        self.preferences_text = tk.Text(pref_frame, height=6, width=80, state='disabled',
+                                       bg='#1e1e1e', fg='white', font=('Consolas', 10))
+        self.preferences_text.pack(fill="x")
+
+        # 数据库管理部分（现有代码保持不变）
+        db_frame = ttk.LabelFrame(scrollable_frame, text="数据库管理", padding=20)
+        db_frame.pack(fill="x", padx=20, pady=10)
+
+        # 数据库信息
+        ttk.Label(db_frame, text="数据库状态", font=('Arial', 12, 'bold')).pack(anchor="w")
+        
+        self.db_info_text = tk.Text(db_frame, height=6, width=80, state='disabled',
+                                   bg='#1e1e1e', fg='white', font=('Consolas', 10))
+        self.db_info_text.pack(fill="x", pady=5)
         
         # 数据库操作按钮
-        db_buttons_frame = ttk_bs.Frame(db_frame)
-        db_buttons_frame.pack(fill=X)
+        db_buttons_frame = ttk.Frame(db_frame)
+        db_buttons_frame.pack(fill="x", pady=5)
+
+        ttk.Button(db_buttons_frame, text="刷新状态", command=self.show_database_info).pack(side="left", padx=(0, 10))
+        ttk.Button(db_buttons_frame, text="创建备份", command=self.create_database_backup).pack(side="left", padx=(0, 10))
+
+        # 角色配置部分（现有代码保持不变）
+        role_frame = ttk.LabelFrame(scrollable_frame, text="用户角色配置", padding=20)
+        role_frame.pack(fill="x", padx=20, pady=10)
+
+        role_buttons_frame = ttk.Frame(role_frame)
+        role_buttons_frame.pack(fill="x", pady=5)
+
+        ttk.Button(role_buttons_frame, text="配置用户角色", command=self.configure_user_role).pack(side="left", padx=(0, 10))
+        ttk.Button(role_buttons_frame, text="重置角色配置", command=self.reset_user_role).pack(side="left", padx=(0, 10))
         
-        backup_btn = ttk_bs.Button(
-            db_buttons_frame,
-            text="创建备份",
-            command=self.create_database_backup,
-            bootstyle="success-outline",
-            width=12
-        )
-        backup_btn.pack(side=LEFT, padx=(0, 10))
-        
-        info_btn = ttk_bs.Button(
-            db_buttons_frame,
-            text="数据库信息",
-            command=self.show_database_info,
-            bootstyle="info-outline",
-            width=12
-        )
-        info_btn.pack(side=LEFT)
-        
-        # AI设置区域
-        ai_frame = ttk_bs.LabelFrame(
-            settings_container,
-            text="AI助手设置",
-            padding=15,
-            bootstyle="success"
-        )
-        ai_frame.pack(fill=X, pady=(0, 15))
-        
-        # API Key设置
-        api_frame = ttk_bs.Frame(ai_frame)
-        api_frame.pack(fill=X, pady=(0, 10))
-        
-        ttk_bs.Label(
-            api_frame,
-            text="DeepSeek API Key:",
-            font=("Microsoft YaHei", 10, "bold")
-        ).pack(anchor=W)
-        
-        self.api_key_entry = ttk_bs.Entry(
-            api_frame,
-            show="*",
-            font=("Microsoft YaHei", 9),
-            width=50
-        )
-        self.api_key_entry.pack(fill=X, pady=(5, 0))
-        self.api_key_entry.insert(0, self.config_manager.get_api_key())
-        
-        # AI按钮
-        ai_buttons_frame = ttk_bs.Frame(ai_frame)
-        ai_buttons_frame.pack(fill=X, pady=(10, 0))
-        
-        save_api_btn = ttk_bs.Button(
-            ai_buttons_frame,
-            text="保存API配置",
-            command=self.save_api_settings,
-            bootstyle="primary-outline",
-            width=12
-        )
-        save_api_btn.pack(side=LEFT, padx=(0, 10))
-        
-        test_api_btn = ttk_bs.Button(
-            ai_buttons_frame,
-            text="测试连接",
-            command=self.test_api_connection,
-            bootstyle="info-outline",
-            width=12
-        )
-        test_api_btn.pack(side=LEFT)
-        
-        # 主题设置区域
-        theme_frame = ttk_bs.LabelFrame(
-            settings_container,
-            text="主题设置",
-            padding=15,
-            bootstyle="warning"
-        )
-        theme_frame.pack(fill=X)
-        
-        ttk_bs.Label(
-            theme_frame,
-            text="当前使用紫色渐变主题（vapor）",
-            font=("Microsoft YaHei", 10)
-        ).pack(anchor=W)
+        # 检查是否已经跳过角色配置
+        skip_role_config = self.config_manager.get('ui.skip_role_config', False)
+        if skip_role_config:
+            ttk.Button(role_buttons_frame, text="重新启用配置提醒", command=self.enable_role_config_reminder).pack(side="left")
+
+        # 显示当前角色信息
+        if self.role_manager and self.role_manager.is_profile_configured():
+            current_role = self.role_manager.get_current_role()
+            role_info = f"当前角色: {current_role['name']}\n描述: {current_role['description']}"
+        else:
+            role_info = "尚未配置用户角色"
+            
+        # 显示配置提醒状态
+        skip_status = "已禁用启动提醒" if skip_role_config else "启动时会提醒配置"
+        role_info += f"\n配置提醒状态: {skip_status}"
+
+        role_info_label = ttk.Label(role_frame, text=role_info, font=('Arial', 10))
+        role_info_label.pack(anchor="w", pady=10)
+
+        # 设置初始显示
+        self.refresh_database_status()  # 只刷新状态，不弹出对话框
+        self.refresh_memory_stats()
+
+        # 配置滚动
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        return scrollable_frame
     
     def create_database_backup(self):
         """创建数据库备份"""
@@ -549,10 +561,60 @@ class TodoApp:
         except Exception as e:
             messagebox.showerror("错误", f"显示数据库信息时出错：{str(e)}")
     
+    def refresh_database_status(self):
+        """刷新数据库状态显示（不弹出对话框）"""
+        try:
+            # 获取数据库信息
+            db_path = self.config_manager.get_database_path()
+            abs_path = os.path.abspath(db_path)
+            
+            # 获取文件大小
+            def get_file_size(file_path):
+                try:
+                    if os.path.exists(file_path):
+                        size = os.path.getsize(file_path)
+                        if size < 1024:
+                            return f"{size} B"
+                        elif size < 1024 * 1024:
+                            return f"{size / 1024:.1f} KB"
+                        else:
+                            return f"{size / (1024 * 1024):.1f} MB"
+                    return "文件不存在"
+                except:
+                    return "未知"
+            
+            # 构建状态信息
+            status_text = f"""数据库状态信息:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+文件路径: {db_path}
+文件大小: {get_file_size(abs_path)}
+MCP功能: {'启用' if self.config_manager.is_mcp_enabled() else '禁用'}
+连接状态: {'正常' if hasattr(self, 'db_manager') and self.db_manager else '未连接'}
+
+数据库功能:
+• 存储所有待办事项数据
+• 支持GTD工作流和四象限管理
+• 提供AI助手数据查询接口"""
+            
+            # 更新显示
+            if hasattr(self, 'db_info_text'):
+                self.db_info_text.config(state='normal')
+                self.db_info_text.delete(1.0, tk.END)
+                self.db_info_text.insert(1.0, status_text)
+                self.db_info_text.config(state='disabled')
+                
+        except Exception as e:
+            error_msg = f"刷新数据库状态失败: {str(e)}"
+            if hasattr(self, 'db_info_text'):
+                self.db_info_text.config(state='normal')
+                self.db_info_text.delete(1.0, tk.END)
+                self.db_info_text.insert(1.0, error_msg)
+                self.db_info_text.config(state='disabled')
+    
     def save_api_settings(self):
         """保存API设置"""
         try:
-            api_key = self.api_key_entry.get().strip()
+            api_key = self.api_key_var.get().strip()
             if api_key and api_key != "your_api_key_here":
                 self.config_manager.set_api_key(api_key)
                 # 更新AI助手的API密钥
@@ -567,7 +629,7 @@ class TodoApp:
         """测试API连接"""
         try:
             # 先保存当前API密钥
-            api_key = self.api_key_entry.get().strip()
+            api_key = self.api_key_var.get().strip()
             if api_key and api_key != "your_api_key_here":
                 self.ai_assistant.ai_core.update_api_key(api_key)
             
@@ -579,6 +641,189 @@ class TodoApp:
                 messagebox.showerror("连接失败", message)
         except Exception as e:
             messagebox.showerror("错误", f"测试连接时出错：{str(e)}")
+    
+    def refresh_memory_stats(self):
+        """刷新AI记忆统计"""
+        try:
+            # 获取对话统计
+            conversations = self.db_manager.get_recent_conversations(50)
+            total_conversations = len(conversations)
+            
+            # 获取用户偏好统计
+            preferences = self.db_manager.get_user_preferences()
+            total_preferences = len(preferences)
+            
+            # 获取关键词统计
+            keywords = self.db_manager.get_important_keywords(20)
+            total_keywords = len(keywords)
+            
+            # 获取任务模板统计
+            templates = self.db_manager.get_task_templates()
+            total_templates = len(templates)
+            
+            # 构建统计信息
+            stats_text = f"""AI学习统计信息:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+对话记录: {total_conversations} 次
+用户偏好: {total_preferences} 项  
+关键概念: {total_keywords} 个
+任务模板: {total_templates} 个
+
+最近对话类型分布:
+"""
+            
+            # 分析对话类型
+            conversation_types = {}
+            for conv in conversations:
+                conv_type = conv[2] if conv[2] else 'general'  # action_taken字段
+                conversation_types[conv_type] = conversation_types.get(conv_type, 0) + 1
+            
+            for conv_type, count in conversation_types.items():
+                stats_text += f"- {conv_type}: {count} 次\n"
+            
+            stats_text += f"\n记忆活跃度: {'高' if total_conversations > 20 else '中' if total_conversations > 5 else '低'}"
+            
+            # 更新显示
+            self.memory_stats_text.config(state='normal')
+            self.memory_stats_text.delete(1.0, tk.END)
+            self.memory_stats_text.insert(1.0, stats_text)
+            self.memory_stats_text.config(state='disabled')
+            
+            # 刷新偏好显示
+            self.refresh_preferences_display()
+            
+        except Exception as e:
+            error_msg = f"刷新记忆统计失败: {str(e)}"
+            if hasattr(self, 'memory_stats_text'):
+                self.memory_stats_text.config(state='normal')
+                self.memory_stats_text.delete(1.0, tk.END)
+                self.memory_stats_text.insert(1.0, error_msg)
+                self.memory_stats_text.config(state='disabled')
+    
+    def refresh_preferences_display(self):
+        """刷新用户偏好显示"""
+        try:
+            preferences = self.db_manager.get_user_preferences()
+            
+            pref_text = "学习到的用户偏好:\n"
+            pref_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            
+            if preferences:
+                # 按类型分组显示
+                pref_groups = {}
+                for pref in preferences:
+                    pref_type = pref[0]
+                    if pref_type not in pref_groups:
+                        pref_groups[pref_type] = []
+                    pref_groups[pref_type].append(pref)
+                
+                for pref_type, items in pref_groups.items():
+                    pref_text += f"\n{pref_type.replace('_', ' ').title()}:\n"
+                    for item in items:
+                        confidence = f"{float(item[3])*100:.0f}%" if item[3] else "50%"
+                        pref_text += f"  • {item[1]}: {item[2]} (置信度: {confidence})\n"
+            else:
+                pref_text += "暂无学习到的偏好，与AI多互动即可建立个性化设置。"
+            
+            # 更新显示
+            self.preferences_text.config(state='normal')
+            self.preferences_text.delete(1.0, tk.END)
+            self.preferences_text.insert(1.0, pref_text)
+            self.preferences_text.config(state='disabled')
+            
+        except Exception as e:
+            error_msg = f"刷新偏好显示失败: {str(e)}"
+            if hasattr(self, 'preferences_text'):
+                self.preferences_text.config(state='normal')
+                self.preferences_text.delete(1.0, tk.END)
+                self.preferences_text.insert(1.0, error_msg)
+                self.preferences_text.config(state='disabled')
+    
+    def export_conversation_history(self):
+        """导出对话历史"""
+        try:
+            from tkinter import filedialog
+            from datetime import datetime
+            import json
+            
+            # 选择保存位置
+            filename = filedialog.asksaveasfilename(
+                title="导出对话历史",
+                defaultextension=".json",
+                filetypes=[("JSON文件", "*.json"), ("文本文件", "*.txt"), ("所有文件", "*.*")]
+            )
+            
+            if filename:
+                # 获取对话历史
+                conversations = self.db_manager.get_recent_conversations(1000)  # 获取最近1000条
+                
+                # 准备导出数据
+                export_data = {
+                    "export_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "total_conversations": len(conversations),
+                    "conversations": []
+                }
+                
+                for conv in conversations:
+                    export_data["conversations"].append({
+                        "user_input": conv[0],
+                        "ai_response": conv[1],
+                        "action_taken": conv[2],
+                        "created_at": conv[3]
+                    })
+                
+                # 写入文件
+                if filename.endswith('.json'):
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(export_data, f, ensure_ascii=False, indent=2)
+                else:
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        f.write(f"对话历史导出 - {export_data['export_time']}\n")
+                        f.write("=" * 50 + "\n\n")
+                        
+                        for i, conv in enumerate(export_data["conversations"], 1):
+                            f.write(f"对话 {i} - {conv['created_at']}\n")
+                            f.write(f"用户: {conv['user_input']}\n")
+                            f.write(f"AI: {conv['ai_response']}\n")
+                            if conv['action_taken']:
+                                f.write(f"操作: {conv['action_taken']}\n")
+                            f.write("-" * 40 + "\n\n")
+                
+                messagebox.showinfo("导出成功", f"对话历史已导出到: {filename}")
+                
+        except Exception as e:
+            messagebox.showerror("导出失败", f"导出对话历史时出错: {str(e)}")
+    
+    def clear_learning_data(self):
+        """清除学习数据"""
+        try:
+            # 确认对话框
+            result = messagebox.askyesno(
+                "确认清除", 
+                "这将清除所有AI学习数据，包括:\n- 对话历史\n- 用户偏好\n- 关键词记忆\n- 任务模板\n\n确定要继续吗？",
+                icon='warning'
+            )
+            
+            if result:
+                # 清除各种学习数据
+                self.db_manager.cursor.execute("DELETE FROM ai_conversations")
+                self.db_manager.cursor.execute("DELETE FROM user_preferences")
+                self.db_manager.cursor.execute("DELETE FROM ai_memory_keywords")
+                self.db_manager.cursor.execute("DELETE FROM task_templates")
+                self.db_manager.conn.commit()
+                
+                # 重置AI助手的会话ID
+                if hasattr(self, 'ai_assistant'):
+                    self.ai_assistant.current_session_id = self.ai_assistant._generate_session_id()
+                    self.ai_assistant.conversation_count = 0
+                
+                messagebox.showinfo("清除成功", "AI学习数据已清除，助手将重新开始学习您的偏好。")
+                
+                # 刷新显示
+                self.refresh_memory_stats()
+                
+        except Exception as e:
+            messagebox.showerror("清除失败", f"清除学习数据时出错: {str(e)}")
     
     def refresh_all_views(self):
         """刷新所有视图"""
@@ -623,24 +868,196 @@ class TodoApp:
         self.summary_labels["total"].config(text=f"总计: {total}")
         self.summary_labels["completed"].config(text=f"已完成: {completed}")
     
+    def configure_user_role(self):
+        """配置用户角色"""
+        try:
+            configured = self.role_manager.show_role_setup_dialog(self.root)
+            if configured:
+                messagebox.showinfo("配置成功", "用户角色配置已更新！")
+                # 刷新界面显示
+                self.refresh_all_views()
+                # 重建AI系统提示词
+                self.ai_assistant.system_prompt = self.ai_assistant._build_system_prompt()
+            
+            # 重新创建设置标签页内容以显示更新的信息
+            for tab_id in range(self.notebook.index("end")):
+                if self.notebook.tab(tab_id, "text") == "设置":
+                    # 清空并重新创建设置标签页
+                    settings_tab = self.notebook.nametowidget(self.notebook.tabs()[tab_id])
+                    for widget in settings_tab.winfo_children():
+                        widget.destroy()
+                    self.create_settings_content(settings_tab)
+                    break
+        except Exception as e:
+            messagebox.showerror("错误", f"配置角色时出错：{str(e)}")
+    
+    def reset_user_role(self):
+        """重置用户角色"""
+        try:
+            result = messagebox.askyesno(
+                "确认重置", 
+                "确定要重置用户角色配置吗？\n这将清除所有个人设置信息。"
+            )
+            if result:
+                # 删除用户配置文件
+                if os.path.exists(self.role_manager.config_file):
+                    os.remove(self.role_manager.config_file)
+                
+                # 重新初始化角色管理器
+                self.role_manager = RoleManager()
+                
+                # 更新UI组件的角色管理器引用
+                self.ui_components.role_manager = self.role_manager
+                
+                # 更新AI助手的角色管理器引用
+                self.ai_assistant.role_manager = self.role_manager
+                self.ai_assistant.task_parser.role_manager = self.role_manager
+                
+                # 重建AI系统提示词
+                self.ai_assistant.system_prompt = self.ai_assistant._build_system_prompt()
+                
+                messagebox.showinfo("重置成功", "用户角色配置已重置！")
+                
+                # 重新创建设置标签页内容
+                for tab_id in range(self.notebook.index("end")):
+                    if self.notebook.tab(tab_id, "text") == "设置":
+                        settings_tab = self.notebook.nametowidget(self.notebook.tabs()[tab_id])
+                        for widget in settings_tab.winfo_children():
+                            widget.destroy()
+                        self.create_settings_content(settings_tab)
+                        break
+        except Exception as e:
+            messagebox.showerror("错误", f"重置角色时出错：{str(e)}")
+    
+    def check_role_configuration(self):
+        """检查用户角色配置"""
+        # 检查是否已经设置过跳过角色配置
+        skip_role_config = self.config_manager.get('ui.skip_role_config', False)
+        
+        if skip_role_config:
+            return  # 如果设置了跳过，就不再显示配置对话框
+            
+        if not self.role_manager.is_profile_configured():
+            # 显示角色配置对话框
+            result = messagebox.askyesno(
+                "角色配置", 
+                "检测到您还未配置用户角色信息。\n\n配置角色信息可以让AI助手更好地为您服务。\n\n是否现在配置？\n\n（选择'否'将不再提醒，您可以稍后在设置中配置）"
+            )
+            
+            if result:
+                configured = self.role_manager.show_role_setup_dialog()
+                if not configured:
+                    # 用户选择稍后配置，使用默认设置
+                    messagebox.showinfo(
+                        "提示", 
+                        "您可以稍后在设置中配置角色信息。\n当前将使用默认设置。"
+                    )
+            else:
+                # 用户选择不配置，设置跳过标志
+                self.config_manager.set('ui.skip_role_config', True)
+                messagebox.showinfo(
+                    "提示", 
+                    "已设置跳过角色配置。\n如需配置，请在设置中手动配置角色信息。"
+                )
+    
+    def enable_role_config_reminder(self):
+        """重新启用角色配置提醒"""
+        try:
+            result = messagebox.askyesno(
+                "重新启用配置提醒", 
+                "确定要重新启用角色配置提醒吗？\n这将不再跳过角色配置。"
+            )
+            if result:
+                self.config_manager.set('ui.skip_role_config', False)
+                messagebox.showinfo("提示", "角色配置提醒已重新启用。")
+                
+                # 重新创建设置标签页内容以更新显示
+                for tab_id in range(self.notebook.index("end")):
+                    if self.notebook.tab(tab_id, "text") == "设置":
+                        settings_tab = self.notebook.nametowidget(self.notebook.tabs()[tab_id])
+                        for widget in settings_tab.winfo_children():
+                            widget.destroy()
+                        self.create_settings_content(settings_tab)
+                        break
+        except Exception as e:
+            messagebox.showerror("错误", f"启用角色配置提醒时出错：{str(e)}")
+    
     def run(self):
         """运行应用程序"""
         try:
             self.root.mainloop()
         finally:
-            # 停止提醒服务
-            self.reminder_service.stop_reminder_thread()
-            # 关闭数据库连接
-            self.db_manager.close()
-            # 保存窗口设置
-            try:
-                window_geometry = self.root.geometry()
-                width, height = window_geometry.split('x')[0], window_geometry.split('x')[1].split('+')[0]
-                self.config_manager.set('ui.window_size.width', int(width))
-                self.config_manager.set('ui.window_size.height', int(height))
-            except:
-                pass
+            # 确保数据库连接正确关闭
+            if hasattr(self, 'db_manager'):
+                self.db_manager.close()
+
+class AIAssistantWindow:
+    """独立的AI助手窗口"""
+    
+    def __init__(self, main_app):
+        self.main_app = main_app
+        self.db_manager = main_app.db_manager
+        self.ai_assistant = main_app.ai_assistant
+        self.config_manager = main_app.config_manager
+        
+        # 创建独立窗口
+        self.window = ttk_bs.Window(themename="vapor")
+        self.window.title("AI智能助手")
+        self.window.geometry("800x900")  # 增加高度从600到900
+        self.window.minsize(600, 700)  # 增加最小高度从400到700
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        """创建AI助手界面"""
+        # 创建主框架
+        main_frame = ttk_bs.Frame(self.window, style='Gradient.TFrame')
+        main_frame.pack(fill=BOTH, expand=True, padx=15, pady=15)
+        
+        # 创建标题
+        title_label = ttk_bs.Label(
+            main_frame, 
+            text="AI智能助手", 
+            font=("Microsoft YaHei", 20, "bold"),
+            bootstyle="light",
+            background='#2D1B69',
+            foreground='#E6E6FA'
+        )
+        title_label.pack(pady=(0, 20))
+        
+        # 创建AI助手内容
+        ai_content_frame = ttk_bs.Frame(main_frame)
+        ai_content_frame.pack(fill=BOTH, expand=True)
+        
+        # 使用现有的AI助手面板创建方法
+        self.main_app.ai_assistant.create_ai_panel(ai_content_frame)
+
+def launch_dual_windows():
+    """启动双窗口模式"""
+    # 创建主应用
+    main_app = TodoApp()
+    
+    # 创建独立的AI窗口
+    ai_window = AIAssistantWindow(main_app)
+    
+    # 设置窗口位置避免重叠
+    main_app.root.geometry("1200x800+100+100")  # 主窗口位置
+    ai_window.window.geometry("800x900+1350+50")  # AI窗口位置（右侧，调整Y位置适应更高的窗口）
+    
+    # 显示AI窗口（不使用新线程，直接显示）
+    ai_window.window.deiconify()  # 确保窗口显示
+    
+    # 启动主窗口的事件循环
+    main_app.run()
 
 if __name__ == "__main__":
-    app = TodoApp()
-    app.run() 
+    import sys
+    
+    # 检查命令行参数
+    if len(sys.argv) > 1 and sys.argv[1] == "--dual":
+        # 双窗口模式
+        launch_dual_windows()
+    else:
+        # 单窗口模式（默认）
+        app = TodoApp()
+        app.run() 

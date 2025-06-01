@@ -9,9 +9,10 @@ from ttkbootstrap.constants import *
 from datetime import datetime, timedelta
 
 class UIComponents:
-    def __init__(self, database_manager):
+    def __init__(self, database_manager, role_manager=None):
         """初始化UI组件"""
         self.db_manager = database_manager
+        self.role_manager = role_manager
         self.priority_names = {1: "重要且紧急", 2: "重要不紧急", 3: "不重要但紧急", 4: "不重要不紧急"}
         self.gtd_names = {
             "next-action": "下一步行动",
@@ -72,9 +73,80 @@ class UIComponents:
         project_label = ttk_bs.Label(project_frame, text="项目: *", font=("Microsoft YaHei", 10, "bold"))
         project_label.pack(anchor=W)
         
-        project_entry = ttk_bs.Entry(project_frame, font=("Microsoft YaHei", 10))
-        project_entry.pack(fill=X, pady=(2, 0))
-        add_frame.project_entry = project_entry
+        # 项目选择下拉框
+        project_combo = ttk_bs.Combobox(
+            project_frame,
+            font=("Microsoft YaHei", 10),
+            state="readonly"
+        )
+        project_combo.pack(fill=X, pady=(2, 0))
+        
+        # 填充项目选项
+        if self.role_manager:
+            projects = self.role_manager.get_available_projects()
+            project_values = [f"{project['name']}" for project in projects]
+            project_combo['values'] = project_values
+            
+            # 设置默认项目
+            default_project_id = self.role_manager.profile.get('default_project', 'work')
+            for project in projects:
+                if project['id'] == default_project_id:
+                    project_combo.set(project['name'])
+                    break
+            
+            # 保存项目ID映射
+            project_combo.project_mapping = {project['name']: project['id'] for project in projects}
+        else:
+            project_combo['values'] = ["工作项目", "个人事务", "学习提升"]
+            project_combo.set("工作项目")
+            project_combo.project_mapping = {
+                "工作项目": "work",
+                "个人事务": "personal", 
+                "学习提升": "study"
+            }
+        
+        add_frame.project_combo = project_combo
+        
+        # 责任级别选择
+        responsibility_frame = ttk_bs.Frame(add_frame)
+        responsibility_frame.pack(fill=X, pady=(0, 8))
+        
+        responsibility_label = ttk_bs.Label(responsibility_frame, text="责任级别: *", font=("Microsoft YaHei", 10, "bold"))
+        responsibility_label.pack(anchor=W)
+        
+        responsibility_combo = ttk_bs.Combobox(
+            responsibility_frame,
+            font=("Microsoft YaHei", 10),
+            state="readonly"
+        )
+        responsibility_combo.pack(fill=X, pady=(2, 0))
+        
+        # 填充责任级别选项
+        if self.role_manager:
+            responsibilities = self.role_manager.get_responsibility_levels()
+            responsibility_values = [f"{resp['name']}" for resp in responsibilities]
+            responsibility_combo['values'] = responsibility_values
+            
+            # 设置默认责任级别
+            default_responsibility = self.role_manager.profile.get('default_responsibility', 'owner')
+            for resp in responsibilities:
+                if resp['id'] == default_responsibility:
+                    responsibility_combo.set(resp['name'])
+                    break
+            
+            # 保存责任级别ID映射
+            responsibility_combo.responsibility_mapping = {resp['name']: resp['id'] for resp in responsibilities}
+        else:
+            responsibility_combo['values'] = ["负责人", "参与者", "关注者", "支持者"]
+            responsibility_combo.set("负责人")
+            responsibility_combo.responsibility_mapping = {
+                "负责人": "owner",
+                "参与者": "participant",
+                "关注者": "observer",
+                "支持者": "supporter"
+            }
+        
+        add_frame.responsibility_combo = responsibility_combo
         
         # 描述输入
         desc_frame = ttk_bs.Frame(add_frame)
@@ -212,7 +284,8 @@ class UIComponents:
     def handle_add_todo(self, add_frame, on_add_callback):
         """处理添加待办事项"""
         title = add_frame.title_entry.get().strip()
-        project = add_frame.project_entry.get().strip()
+        project_name = add_frame.project_combo.get()
+        responsibility_name = add_frame.responsibility_combo.get()
         
         # 验证必填项
         if not title:
@@ -220,10 +293,19 @@ class UIComponents:
             add_frame.title_entry.focus()
             return
         
-        if not project:
-            messagebox.showerror("错误", "请输入项目（必填项）")
-            add_frame.project_entry.focus()
+        if not project_name:
+            messagebox.showerror("错误", "请选择项目（必填项）")
+            add_frame.project_combo.focus()
             return
+        
+        if not responsibility_name:
+            messagebox.showerror("错误", "请选择责任级别（必填项）")
+            add_frame.responsibility_combo.focus()
+            return
+        
+        # 获取项目和责任级别的ID
+        project_id = add_frame.project_combo.project_mapping.get(project_name, "work")
+        responsibility_id = add_frame.responsibility_combo.responsibility_mapping.get(responsibility_name, "owner")
         
         description = add_frame.desc_text.get("1.0", tk.END).strip()
         priority = int(add_frame.priority_var.get())
@@ -249,17 +331,34 @@ class UIComponents:
         try:
             # 添加到数据库
             todo_id = self.db_manager.add_todo(
-                title, description, project, priority, urgency, importance, 
+                title, description, project_id, responsibility_id, priority, urgency, importance, 
                 gtd_tag, due_date, reminder_time
             )
             
             # 显示成功消息
-            messagebox.showinfo("成功", f"待办事项添加成功！\n标题: {title}\n项目: {project}")
+            messagebox.showinfo("成功", f"待办事项添加成功！\n标题: {title}\n项目: {project_name}\n责任级别: {responsibility_name}")
             
-            # 清空输入框
+            # 清空输入框但保持默认选择
             add_frame.title_entry.delete(0, tk.END)
-            add_frame.project_entry.delete(0, tk.END)
             add_frame.desc_text.delete("1.0", tk.END)
+            
+            # 重置为默认值
+            if self.role_manager:
+                # 重新设置默认项目
+                default_project_id = self.role_manager.profile.get('default_project', 'work')
+                projects = self.role_manager.get_available_projects()
+                for project in projects:
+                    if project['id'] == default_project_id:
+                        add_frame.project_combo.set(project['name'])
+                        break
+                
+                # 重新设置默认责任级别
+                default_responsibility = self.role_manager.profile.get('default_responsibility', 'owner')
+                responsibilities = self.role_manager.get_responsibility_levels()
+                for resp in responsibilities:
+                    if resp['id'] == default_responsibility:
+                        add_frame.responsibility_combo.set(resp['name'])
+                        break
             
             # 调用回调函数刷新界面
             if on_add_callback:

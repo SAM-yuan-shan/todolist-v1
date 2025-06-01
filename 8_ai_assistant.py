@@ -39,15 +39,16 @@ except ImportError:
 class AIAssistant:
     """AI助手主类 - 重构版"""
     
-    def __init__(self, database_manager, ui_components, config_manager=None):
+    def __init__(self, database_manager, ui_components, config_manager=None, role_manager=None):
         """初始化AI助手"""
         self.database_manager = database_manager
         self.ui_components = ui_components
         self.config_manager = config_manager
+        self.role_manager = role_manager
         
         # 初始化各个模块
         self.ai_core = AICore(config_manager)
-        self.task_parser = TaskParser()
+        self.task_parser = TaskParser(role_manager)  # 传递角色管理器
         self.ui = AIUserInterface(self)
         
         # 初始化SQL处理器（如果启用MCP）
@@ -57,8 +58,17 @@ class AIAssistant:
             db_path = config_manager.get_database_path()
             self.sql_handler = SQLHandler(db_path)
         
+        # AI记忆相关属性
+        self.current_session_id = self._generate_session_id()
+        self.conversation_count = 0
+        
         # 构建系统提示词
         self.system_prompt = self._build_system_prompt()
+
+    def _generate_session_id(self):
+        """生成会话ID"""
+        import uuid
+        return str(uuid.uuid4())[:8]
 
     def create_ai_panel(self, parent):
         """创建AI助手面板"""
@@ -71,18 +81,26 @@ class AIAssistant:
     def process_ai_response(self, user_input):
         """处理AI响应的主要逻辑"""
         try:
+            # 增加对话计数
+            self.conversation_count += 1
+            
             # 首先检查是否是SQL查询请求（如果启用MCP）
             if self.sql_handler:
                 query_result = self.sql_handler.handle_query_request(user_input.lower())
                 if query_result:
                     self.add_message("AI助手", query_result, "assistant")
+                    # 保存对话历史
+                    self._save_conversation(user_input, query_result, "sql_query")
                     return
         
             # 获取待办事项上下文
             todo_context = self.get_todo_context()
             
+            # 获取AI记忆上下文
+            memory_context = self._get_memory_context()
+            
             # 构建完整的系统提示词
-            full_system_prompt = f"{self.system_prompt}\n\n当前待办事项数据:\n{todo_context}"
+            full_system_prompt = f"{self.system_prompt}\n\n当前待办事项数据:\n{todo_context}\n\n用户个性化信息:\n{memory_context}"
             
             # 调用AI API
             success, ai_response = self.ai_core.call_deepseek_api(
@@ -94,21 +112,34 @@ class AIAssistant:
                 # 解析AI响应，确定操作类型
                 action = self.parse_ai_response(ai_response, user_input)
                 
+                # 学习用户偏好和关键词
+                self._learn_from_interaction(user_input, ai_response, action)
+                
                 if action == "add_task":
                     self.execute_add_operation(user_input)
+                    # 保存对话历史
+                    self._save_conversation(user_input, ai_response, "add_task")
                 elif action in ["delete_task", "complete_task", "update_task"]:
                     self.show_operation_confirmation(action, ai_response, user_input)
+                    # 保存对话历史
+                    self._save_conversation(user_input, ai_response, action)
                 else:
                     # 直接显示AI响应
                     self.add_message("AI助手", ai_response, "assistant")
+                    # 保存对话历史
+                    self._save_conversation(user_input, ai_response, "general")
             else:
                 # API调用失败，使用离线响应
                 offline_response = self.offline_response(user_input, ai_response)
                 self.add_message("AI助手", offline_response, "assistant")
+                # 保存对话历史
+                self._save_conversation(user_input, offline_response, "offline")
                 
         except Exception as e:
             error_msg = f"处理请求时出错: {str(e)}"
             self.add_message("系统", error_msg, "error")
+            # 保存错误对话
+            self._save_conversation(user_input, error_msg, "error")
 
     def get_todo_context(self):
         """获取待办事项上下文"""
@@ -372,34 +403,220 @@ class AIAssistant:
 
     def _build_system_prompt(self):
         """构建系统提示词"""
-        return """你是一个智能待办事项管理助手，具备强大的任务智能解析能力。
+        base_prompt = """你是一个专业的待办事项AI助手，具有记忆和学习能力。
 
-【重要】在回答任何问题之前，你必须：
-1. 仔细查看和分析当前提供的待办事项数据
-2. 基于实际的数据库内容来回答问题
-3. 如果用户询问任务情况，要准确引用具体的任务ID、标题和状态
-4. 始终以当前数据库的实际内容为准，不要假设或猜测
+核心能力：
+1. 智能理解用户的待办事项需求
+2. 记住用户的偏好和工作模式
+3. 根据历史交互提供个性化建议
+4. 执行任务的增删改查操作
+5. 提供数据分析和洞察
 
-【智能解析能力】当用户输入任务时，系统会自动：
-1. 🎯 四象限分类：根据关键词自动判断重要性和紧急性
-2. 🏷️ GTD标签自动分类
-3. 📁 项目智能推断
-4. ⏰ 时间信息提取
+任务操作规则：
+- 添加任务：解析标题、描述、项目、优先级、GTD标签、截止日期等
+- 删除任务：根据ID或描述准确识别目标任务
+- 完成任务：标记任务状态为完成
+- 查询任务：提供筛选和统计信息
 
-你的能力包括：
-1. 查看所有待办事项 - 基于实际数据库内容提供准确信息
-2. 智能添加待办事项 - 自动解析并分类用户输入的任务
-3. 修改现有待办事项 - 基于现有任务ID进行修改
-4. 删除待办事项 - 根据任务ID或标题精确删除
-5. 标记任务完成 - 将指定任务状态改为已完成
-6. 按项目、优先级、GTD标签筛选任务 - 基于实际数据进行筛选
-7. 分析任务分布和统计信息 - 提供基于真实数据的分析
+优先级分类（重要性+紧急性四象限）：
+1. 重要且紧急 - 立即处理
+2. 重要不紧急 - 计划处理  
+3. 不重要但紧急 - 委托处理
+4. 不重要不紧急 - 有空处理
 
-回答规范：
-1. 每次回答前，先简要总结当前数据库状态
-2. 如果用户询问具体任务，要引用准确的任务ID和标题
-3. 提供操作建议时，要基于实际存在的任务
-4. 当用户要求添加任务时，说明系统会自动进行智能分类
-5. 对于复杂操作，提供确认界面让用户选择执行或重新理解
+GTD标签含义：
+- next-action: 下一步行动
+- waiting-for: 等待中
+- someday-maybe: 将来/也许
+- inbox: 收件箱
 
-记住：始终基于实际数据库内容回答，充分利用智能解析功能，为用户提供准确、高效的任务管理服务。""" 
+个性化服务：
+- 学习用户的表达习惯和偏好
+- 记住常用项目和工作模式
+- 基于历史互动提供更贴心的建议
+- 适应用户的沟通风格
+
+回复风格：
+- 简洁明了，避免冗长
+- 针对性强，基于用户历史偏好
+- 主动询问不明确的信息
+- 提供可行的操作建议
+
+记忆运用：
+- 参考用户偏好进行任务分类建议
+- 利用常用关键词理解用户意图
+- 基于历史互动模式调整回复风格
+- 主动关联相关的历史任务或项目"""
+
+        # 如果有角色管理器，添加角色相关的提示
+        if self.role_manager:
+            try:
+                current_role = self.role_manager.get_current_role()
+                if current_role:
+                    role_prompt = f"""
+
+当前用户角色设定：{current_role['name']}
+角色描述：{current_role['description']}
+工作重点：{current_role['work_focus']}
+沟通风格：{current_role['communication_style']}
+时间偏好：{current_role['time_preference']}
+
+请根据用户的角色特点提供更适合的建议和服务。"""
+                    base_prompt += role_prompt
+            except:
+                pass
+        
+        return base_prompt
+
+    def _get_memory_context(self):
+        """获取AI记忆上下文"""
+        try:
+            memory_info = self.database_manager.get_ai_context_for_user()
+            
+            context_parts = []
+            
+            # 用户偏好
+            if memory_info.get('preferences'):
+                context_parts.append("用户偏好:")
+                for pref_key, pref_value in memory_info['preferences'].items():
+                    context_parts.append(f"- {pref_key}: {pref_value}")
+            
+            # 重要关键词
+            if memory_info.get('important_keywords'):
+                context_parts.append("\n常用概念: " + ", ".join(memory_info['important_keywords']))
+            
+            # 最近对话上下文
+            if memory_info.get('recent_context'):
+                context_parts.append("\n最近交互:")
+                for ctx in memory_info['recent_context'][-3:]:  # 只取最近3次
+                    if ctx['action']:
+                        context_parts.append(f"- 用户说: {ctx['input'][:50]}... → 执行了: {ctx['action']}")
+            
+            return "\n".join(context_parts) if context_parts else "暂无个性化信息"
+            
+        except Exception as e:
+            return f"获取记忆上下文失败: {str(e)}"
+
+    def _save_conversation(self, user_input, ai_response, action_taken=None, related_todo_ids=None):
+        """保存对话历史"""
+        try:
+            # 生成上下文摘要（简化版）
+            context_summary = f"第{self.conversation_count}次对话"
+            
+            # 保存对话
+            self.database_manager.save_ai_conversation(
+                user_input=user_input,
+                ai_response=ai_response,
+                context_summary=context_summary,
+                action_taken=action_taken,
+                related_todo_ids=related_todo_ids,
+                session_id=self.current_session_id,
+                conversation_type=self._classify_conversation_type(user_input, action_taken)
+            )
+            
+        except Exception as e:
+            print(f"保存对话历史失败: {e}")
+
+    def _classify_conversation_type(self, user_input, action_taken):
+        """分类对话类型"""
+        if action_taken in ['add_task', 'delete_task', 'complete_task', 'update_task']:
+            return 'task_management'
+        elif action_taken == 'sql_query':
+            return 'data_query'
+        elif any(keyword in user_input.lower() for keyword in ['统计', '分析', '报告', '总结']):
+            return 'analysis'
+        else:
+            return 'general'
+
+    def _learn_from_interaction(self, user_input, ai_response, action_taken):
+        """从交互中学习用户偏好"""
+        try:
+            # 学习工作模式偏好
+            self._learn_work_patterns(user_input, action_taken)
+            
+            # 学习优先级偏好
+            self._learn_priority_preferences(user_input)
+            
+            # 学习沟通风格
+            self._learn_communication_style(user_input)
+            
+            # 更新关键词记忆
+            self._update_keyword_memory(user_input)
+            
+        except Exception as e:
+            print(f"学习过程中出错: {e}")
+
+    def _learn_work_patterns(self, user_input, action_taken):
+        """学习工作模式"""
+        input_lower = user_input.lower()
+        
+        # 学习时间偏好
+        time_indicators = {
+            '早上': 'morning_person',
+            '晚上': 'night_person', 
+            '下午': 'afternoon_person',
+            '今天': 'immediate_planner',
+            '明天': 'advance_planner',
+            '下周': 'long_term_planner'
+        }
+        
+        for indicator, preference in time_indicators.items():
+            if indicator in input_lower:
+                self.database_manager.save_user_preference(
+                    'work_pattern', preference, 'true', 
+                    confidence_score=0.7, learned_from=user_input[:50]
+                )
+
+    def _learn_priority_preferences(self, user_input):
+        """学习优先级偏好"""
+        input_lower = user_input.lower()
+        
+        priority_indicators = {
+            '紧急': 'prefers_urgency',
+            '重要': 'prefers_importance',
+            '马上': 'immediate_action',
+            '慢慢': 'patient_approach'
+        }
+        
+        for indicator, preference in priority_indicators.items():
+            if indicator in input_lower:
+                self.database_manager.save_user_preference(
+                    'priority_style', preference, 'true',
+                    confidence_score=0.6, learned_from=user_input[:50]
+                )
+
+    def _learn_communication_style(self, user_input):
+        """学习沟通风格"""
+        input_lower = user_input.lower()
+        
+        # 分析用户的表达方式
+        if len(user_input) > 50:
+            self.database_manager.save_user_preference(
+                'communication_style', 'detailed', 'true',
+                confidence_score=0.5, learned_from="详细表达"
+            )
+        elif len(user_input) < 20:
+            self.database_manager.save_user_preference(
+                'communication_style', 'concise', 'true',
+                confidence_score=0.5, learned_from="简洁表达"
+            )
+
+    def _update_keyword_memory(self, user_input):
+        """更新关键词记忆"""
+        # 提取关键词（简化版）
+        import re
+        
+        # 常见的项目关键词
+        project_words = re.findall(r'项目|工程|产品|系统|平台|应用', user_input)
+        for word in project_words:
+            self.database_manager.update_keyword_memory(word, 'project', user_input[:100])
+        
+        # 技术关键词
+        tech_words = re.findall(r'开发|设计|测试|部署|维护|优化', user_input)
+        for word in tech_words:
+            self.database_manager.update_keyword_memory(word, 'technology', user_input[:100])
+        
+        # 人员关键词
+        person_words = re.findall(r'团队|同事|客户|老板|领导', user_input)
+        for word in person_words:
+            self.database_manager.update_keyword_memory(word, 'person', user_input[:100]) 
