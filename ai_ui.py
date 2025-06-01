@@ -302,81 +302,123 @@ class AIUserInterface:
     
     def add_message(self, sender, message, style="secondary"):
         """添加消息到聊天显示区域"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        def _add_message_main_thread():
+            try:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                
+                # 滚动到底部
+                self.chat_display.see(tk.END)
+                
+                # 插入消息
+                self.chat_display.insert(tk.END, f"[{timestamp}] {sender}: ", style)
+                self.chat_display.insert(tk.END, f"{message}\n\n")
+                
+                # 自动滚动到底部
+                self.chat_display.see(tk.END)
+            except Exception as e:
+                print(f"添加消息时出错: {e}")
         
-        # 滚动到底部
-        self.chat_display.see(tk.END)
-        
-        # 插入消息
-        self.chat_display.insert(tk.END, f"[{timestamp}] {sender}: ", style)
-        self.chat_display.insert(tk.END, f"{message}\n\n")
-        
-        # 自动滚动到底部
-        self.chat_display.see(tk.END)
+        # 确保在主线程中执行UI更新
+        try:
+            self.chat_display.after(0, _add_message_main_thread)
+        except Exception as e:
+            print(f"调度UI更新时出错: {e}")
     
     def add_streaming_message(self, sender, style="secondary"):
         """开始流式消息，返回消息标识符"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        def _add_streaming_message_main_thread():
+            try:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                
+                # 滚动到底部
+                self.chat_display.see(tk.END)
+                
+                # 插入消息头
+                self.chat_display.insert(tk.END, f"[{timestamp}] {sender}: ", style)
+                
+                # 记录消息开始位置
+                start_pos = self.chat_display.index(tk.END + "-1c")
+                
+                return {
+                    'sender': sender,
+                    'timestamp': timestamp,
+                    'start_pos': start_pos,
+                    'current_content': ''
+                }
+            except Exception as e:
+                print(f"开始流式消息时出错: {e}")
+                return None
         
-        # 滚动到底部
-        self.chat_display.see(tk.END)
-        
-        # 插入消息头
-        self.chat_display.insert(tk.END, f"[{timestamp}] {sender}: ", style)
-        
-        # 记录消息开始位置
-        start_pos = self.chat_display.index(tk.END + "-1c")
-        
-        # 返回消息标识符
-        return {
-            'sender': sender,
-            'timestamp': timestamp,
-            'start_pos': start_pos,
-            'current_content': ''
-        }
+        # 在主线程中执行并返回结果
+        try:
+            return self.chat_display.tk.call('after', 'idle', _add_streaming_message_main_thread)
+        except Exception as e:
+            print(f"调度流式消息时出错: {e}")
+            # 直接调用作为备选方案
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            return {
+                'sender': sender,
+                'timestamp': timestamp,
+                'start_pos': None,
+                'current_content': ''
+            }
     
     def update_streaming_message(self, message_info, new_content, style=None):
         """更新流式消息内容"""
         if not message_info:
             return
             
+        def _update_streaming_message_main_thread():
+            try:
+                # 添加新内容到当前内容
+                message_info['current_content'] += new_content
+                
+                # 获取当前位置
+                current_pos = self.chat_display.index(tk.END + "-1c")
+                
+                # 插入新内容
+                if style:
+                    self.chat_display.insert(current_pos, new_content, style)
+                else:
+                    self.chat_display.insert(current_pos, new_content)
+                
+                # 自动滚动到底部
+                self.chat_display.see(tk.END)
+                
+                # 强制更新显示
+                self.chat_display.update_idletasks()
+                
+            except Exception as e:
+                print(f"更新流式消息出错: {e}")
+        
+        # 在主线程中执行
         try:
-            # 添加新内容到当前内容
-            message_info['current_content'] += new_content
-            
-            # 获取当前位置
-            current_pos = self.chat_display.index(tk.END + "-1c")
-            
-            # 插入新内容
-            if style:
-                self.chat_display.insert(current_pos, new_content, style)
-            else:
-                self.chat_display.insert(current_pos, new_content)
-            
-            # 自动滚动到底部
-            self.chat_display.see(tk.END)
-            
-            # 强制更新显示
-            self.chat_display.update_idletasks()
-            
+            self.chat_display.after(0, _update_streaming_message_main_thread)
         except Exception as e:
-            print(f"更新流式消息出错: {e}")
+            print(f"调度流式消息更新时出错: {e}")
     
     def finish_streaming_message(self, message_info):
         """完成流式消息"""
         if not message_info:
             return
             
+        def _finish_streaming_message_main_thread():
+            try:
+                # 添加换行符结束消息
+                current_pos = self.chat_display.index(tk.END + "-1c")
+                self.chat_display.insert(current_pos, "\n\n")
+                
+                # 滚动到底部
+                self.chat_display.see(tk.END)
+                
+            except Exception as e:
+                print(f"完成流式消息出错: {e}")
+        
+        # 在主线程中执行
         try:
-            # 添加换行符结束消息
-            current_pos = self.chat_display.index(tk.END + "-1c")
-            self.chat_display.insert(current_pos, "\n\n")
-            
-            # 滚动到底部
-            self.chat_display.see(tk.END)
-            
+            self.chat_display.after(0, _finish_streaming_message_main_thread)
         except Exception as e:
-            print(f"完成流式消息出错: {e}")
+            print(f"调度流式消息完成时出错: {e}")
     
     def show_gtd_quadrant_confirmation(self, task_info, user_input):
         """显示GTD和四象限确认对话框"""
