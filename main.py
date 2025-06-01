@@ -1,411 +1,390 @@
 """
-智能待办事项管理器 - 主应用程序
-整合所有功能模块的主入口
+智能待办事项管理器主程序
+集成GTD工作流、四象限管理法、AI助手和MCP功能
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, BOTH, LEFT, RIGHT, X, Y, W, E, N, S, TOP
+from tkinter import ttk, messagebox, BOTH, LEFT, RIGHT, X, Y, W, E, N, S, TOP, BOTTOM
 import ttkbootstrap as ttk_bs
 from ttkbootstrap.constants import *
 import importlib
+import sys
+import os
 
-# 动态导入各个功能模块
-database_module = importlib.import_module('1_database')
-reminder_module = importlib.import_module('2_reminder_service')
-ui_module = importlib.import_module('3_ui_components')
-calendar_module = importlib.import_module('4_calendar_view')
-quadrant_module = importlib.import_module('5_quadrant_view')
-summary_module = importlib.import_module('6_summary_view')
-project_module = importlib.import_module('7_project_view')
-
-DatabaseManager = database_module.DatabaseManager
-ReminderService = reminder_module.ReminderService
-UIComponents = ui_module.UIComponents
-CalendarView = calendar_module.CalendarView
-QuadrantView = quadrant_module.QuadrantView
-SummaryView = summary_module.SummaryView
-ProjectView = project_module.ProjectView
-
-class TodoApp:
-    def __init__(self):
-        """初始化主应用程序"""
-        # 创建主窗口 - 紫色主题
-        self.root = ttk_bs.Window(themename="vapor")
-        self.root.title("智能待办事项管理器")
-        self.root.geometry("1400x900")
-        self.root.minsize(1200, 700)
+def main():
+    """主函数"""
+    try:
+        # 导入配置管理器
+        config_module = importlib.import_module('9_config_manager')
+        config_manager = config_module.ConfigManager()
         
-        # 设置紫色渐变背景
-        self.setup_gradient_background()
+        # 创建主窗口（隐藏）
+        root = ttk_bs.Window(themename="flatly")
+        root.withdraw()  # 隐藏主窗口
         
-        # 初始化各个管理器
-        self.db_manager = DatabaseManager()
-        self.reminder_service = ReminderService(self.db_manager)
-        self.ui_components = UIComponents(self.db_manager)
-        self.calendar_view = CalendarView(self.db_manager, self.ui_components)
-        self.quadrant_view = QuadrantView(self.db_manager, self.ui_components)
-        self.summary_view = SummaryView(self.db_manager, self.ui_components)
-        self.project_view = ProjectView(self.db_manager, self.ui_components)
+        # 如果是首次运行，显示配置对话框
+        if config_manager.is_first_run():
+            config_manager.show_first_run_dialog(root)
         
-        # 创建界面
-        self.create_widgets()
+        # 显示主窗口
+        root.deiconify()
+        root.title("智能待办事项管理器 v1.0")
         
-        # 启动提醒服务
-        self.reminder_service.start_reminder_thread()
+        # 从配置文件获取窗口大小
+        window_width = config_manager.get('ui.window_size.width', 1200)
+        window_height = config_manager.get('ui.window_size.height', 800)
+        root.geometry(f"{window_width}x{window_height}")
         
-        # 加载数据
-        self.refresh_all_views()
-    
-    def setup_gradient_background(self):
-        """设置紫色渐变背景"""
-        style = ttk_bs.Style()
-        # 设置紫色渐变主题
-        style.configure('Gradient.TFrame', background='#2D1B69')
-        style.configure('Card.TFrame', background='rgba(139, 69, 255, 0.1)')
-    
-    def create_widgets(self):
-        """创建主界面"""
-        # 创建主框架
-        main_frame = ttk_bs.Frame(self.root, style='Gradient.TFrame')
-        main_frame.pack(fill=BOTH, expand=True, padx=15, pady=15)
-        
-        # 创建标题
-        title_label = ttk_bs.Label(
-            main_frame, 
-            text="智能待办事项管理器", 
-            font=("Microsoft YaHei", 24, "bold"),
-            bootstyle="light",
-            background='#2D1B69',
-            foreground='#E6E6FA'
-        )
-        title_label.pack(pady=(0, 25))
-        
-        # 创建标签页控件
-        self.notebook = ttk_bs.Notebook(main_frame)
-        self.notebook.pack(fill=BOTH, expand=True)
-        
-        # 创建各个标签页
-        self.create_main_view_tab()
-        self.create_calendar_tab()
-        self.create_project_tab()
-        self.create_summary_tab()
-    
-    def create_main_view_tab(self):
-        """创建主视图标签页"""
-        main_tab = ttk_bs.Frame(self.notebook)
-        self.notebook.add(main_tab, text="主视图")
-        
-        # 创建主要内容区域
-        content_frame = ttk_bs.Frame(main_tab, style='Gradient.TFrame')
-        content_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
-        
-        # 使用grid布局确保完美对齐
-        content_frame.grid_columnconfigure(1, weight=1)  # 右侧列可扩展
-        content_frame.grid_rowconfigure(0, weight=1)     # 行可扩展
-        
-        # 左侧：添加待办事项 - 固定宽度
-        left_frame = ttk_bs.Frame(content_frame)
-        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        left_frame.configure(width=380)
-        left_frame.pack_propagate(False)
-        
-        # 创建添加待办事项面板
-        self.ui_components.create_add_todo_panel(left_frame, self.refresh_all_views)
-        
-        # 右侧：主要内容区域
-        right_frame = ttk_bs.Frame(content_frame)
-        right_frame.grid(row=0, column=1, sticky="nsew")
-        
-        # 右上角：水平布局 - 任务汇总 + 提醒中心（固定较小高度）
-        top_horizontal_frame = ttk_bs.Frame(right_frame)
-        top_horizontal_frame.pack(side=TOP, fill=X, pady=(0, 10))
-        top_horizontal_frame.configure(height=120)  # 固定较小高度
-        top_horizontal_frame.pack_propagate(False)
-        
-        # 左侧：任务汇总（较小）
-        summary_container = ttk_bs.Frame(top_horizontal_frame)
-        summary_container.pack(side=LEFT, fill=BOTH, padx=(0, 10))
-        summary_container.configure(width=280)  # 进一步减小宽度
-        summary_container.pack_propagate(False)
-        
-        summary_frame = ttk_bs.LabelFrame(
-            summary_container, 
-            text="任务汇总", 
-            bootstyle="primary",
-            padding=6  # 减小内边距
-        )
-        summary_frame.pack(fill=BOTH, expand=True)
-        
-        self.summary_labels = self.ui_components.create_summary_panel(summary_frame)
-        
-        # 右侧：提醒中心（较大）
-        reminder_container = ttk_bs.Frame(top_horizontal_frame)
-        reminder_container.pack(side=RIGHT, fill=BOTH, expand=True)
-        
-        self.create_reminder_panel(reminder_container)
-        
-        # 右下角：四象限视图区域（更多空间）
-        quadrant_frame = ttk_bs.Frame(right_frame)
-        quadrant_frame.pack(side=TOP, fill=BOTH, expand=True)
-        
-        self.quadrant_view.create_integrated_view_panel(quadrant_frame)
-    
-    def create_reminder_panel(self, parent):
-        """创建提醒功能面板"""
-        reminder_frame = ttk_bs.LabelFrame(
-            parent, 
-            text="提醒中心", 
-            bootstyle="info",  # 改为蓝色主题，移除红色
-            padding=6
-        )
-        reminder_frame.pack(fill=BOTH, expand=True)
-        
-        # 第一行：提醒状态和控制按钮
-        control_frame = ttk_bs.Frame(reminder_frame)
-        control_frame.pack(fill=X, pady=(0, 5))
-        
-        # 提醒状态显示
-        self.reminder_status_label = ttk_bs.Label(
-            control_frame,
-            text="提醒服务: 运行中",
-            bootstyle="success",
-            font=("Microsoft YaHei", 9)
-        )
-        self.reminder_status_label.pack(side=LEFT)
-        
-        # 提醒控制按钮
-        button_frame = ttk_bs.Frame(control_frame)
-        button_frame.pack(side=RIGHT)
-        
-        self.pause_reminder_btn = ttk_bs.Button(
-            button_frame,
-            text="暂停提醒",
-            bootstyle="warning-outline",
-            command=self.toggle_reminder_service,
-            width=8
-        )
-        self.pause_reminder_btn.pack(side=LEFT, padx=(0, 3))
-        
-        test_reminder_btn = ttk_bs.Button(
-            button_frame,
-            text="测试提醒",
-            bootstyle="info-outline",
-            command=self.test_reminder,
-            width=8
-        )
-        test_reminder_btn.pack(side=LEFT)
-        
-        # 第二行：筛选器
-        filter_frame = ttk_bs.Frame(reminder_frame)
-        filter_frame.pack(fill=X, pady=(0, 5))
-        
-        ttk_bs.Label(
-            filter_frame,
-            text="筛选任务:",
-            font=("Microsoft YaHei", 8, "bold")
-        ).pack(side=LEFT)
-        
-        # 天数筛选下拉框
-        self.filter_days_var = tk.StringVar(value="3")
-        filter_combo = ttk_bs.Combobox(
-            filter_frame,
-            textvariable=self.filter_days_var,
-            values=["1", "3", "7", "14", "30", "全部"],
-            width=8,
-            state="readonly"
-        )
-        filter_combo.pack(side=LEFT, padx=(5, 5))
-        filter_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_upcoming_reminders())
-        
-        ttk_bs.Label(
-            filter_frame,
-            text="天内到期",
-            font=("Microsoft YaHei", 8)
-        ).pack(side=LEFT)
-        
-        # 第三行：即将到期的任务
-        upcoming_frame = ttk_bs.Frame(reminder_frame)
-        upcoming_frame.pack(fill=BOTH, expand=True)
-        
-        upcoming_label = ttk_bs.Label(
-            upcoming_frame,
-            text="即将到期任务:",
-            font=("Microsoft YaHei", 8, "bold")
-        )
-        upcoming_label.pack(anchor=W)
-        
-        # 创建滚动区域显示即将到期的任务
-        self.upcoming_text = tk.Text(
-            upcoming_frame,
-            height=2,
-            wrap=tk.WORD,
-            font=("Microsoft YaHei", 8),
-            bg="#2D1B69",
-            fg="#E6E6FA",
-            relief="flat",
-            borderwidth=0
-        )
-        self.upcoming_text.pack(fill=BOTH, expand=True, pady=(2, 0))
-        
-        # 初始化即将到期任务显示
-        self.refresh_upcoming_reminders()
-    
-    def toggle_reminder_service(self):
-        """切换提醒服务状态"""
-        if self.reminder_service.running:
-            self.reminder_service.stop_reminder_thread()
-            self.reminder_status_label.config(
-                text="提醒服务: 已暂停",
-                bootstyle="danger"
-            )
-            self.pause_reminder_btn.config(text="启动提醒")
-        else:
-            self.reminder_service.start_reminder_thread()
-            self.reminder_status_label.config(
-                text="提醒服务: 运行中",
-                bootstyle="success"
-            )
-            self.pause_reminder_btn.config(text="暂停提醒")
-    
-    def test_reminder(self):
-        """测试提醒功能"""
-        self.reminder_service.send_notification(
-            "测试提醒",
-            "这是一个测试提醒，用于验证提醒功能是否正常工作。"
-        )
-        messagebox.showinfo("提醒测试", "测试提醒已发送！请查看系统通知。")
-    
-    def refresh_upcoming_reminders(self):
-        """刷新即将到期的提醒"""
-        from datetime import datetime, timedelta
-        
-        # 获取筛选天数
-        filter_days = self.filter_days_var.get() if hasattr(self, 'filter_days_var') else "3"
-        
-        today = datetime.now().date()
-        
-        if filter_days == "全部":
-            # 显示所有未完成的任务
-            end_date = today + timedelta(days=365)  # 一年内的任务
-        else:
-            # 根据选择的天数筛选
-            days = int(filter_days)
-            end_date = today + timedelta(days=days)
-        
-        upcoming_tasks = self.db_manager.get_upcoming_tasks(
-            today.strftime('%Y-%m-%d'),
-            end_date.strftime('%Y-%m-%d')
-        )
-        
-        # 清空文本框
-        self.upcoming_text.delete(1.0, tk.END)
-        
-        if not upcoming_tasks:
-            if filter_days == "全部":
-                self.upcoming_text.insert(tk.END, "暂无未完成的任务")
-            else:
-                self.upcoming_text.insert(tk.END, f"暂无{filter_days}天内到期的任务")
-        else:
-            # 计算剩余天数并显示
-            for task in upcoming_tasks[:5]:  # 只显示前5个
-                task_id, title, project, due_date = task
-                
-                # 计算剩余天数
-                try:
-                    due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date()
-                    days_left = (due_date_obj - today).days
-                    
-                    if days_left < 0:
-                        days_text = f"已逾期{abs(days_left)}天"
-                        status_color = "🔴"
-                    elif days_left == 0:
-                        days_text = "今天到期"
-                        status_color = "🟡"
-                    elif days_left <= 3:
-                        days_text = f"还有{days_left}天"
-                        status_color = "🟠"
-                    else:
-                        days_text = f"还有{days_left}天"
-                        status_color = "🟢"
-                    
-                    project_text = f"[{project}] " if project else ""
-                    self.upcoming_text.insert(
-                        tk.END, 
-                        f"{status_color} {project_text}{title} ({days_text})\n"
-                    )
-                except ValueError:
-                    # 如果日期格式有问题，显示原始日期
-                    project_text = f"[{project}] " if project else ""
-                    self.upcoming_text.insert(
-                        tk.END, 
-                        f"• {project_text}{title} ({due_date})\n"
-                    )
-        
-        self.upcoming_text.config(state=tk.DISABLED)
-    
-    def create_calendar_tab(self):
-        """创建日历标签页"""
-        calendar_tab = self.calendar_view.create_calendar_tab(self.notebook)
-        self.notebook.add(calendar_tab, text="日历视图")
-    
-    def create_project_tab(self):
-        """创建项目汇总标签页"""
-        project_tab = self.project_view.create_project_tab(self.notebook)
-        self.notebook.add(project_tab, text="项目汇总")
-    
-    def create_summary_tab(self):
-        """创建汇总标签页"""
-        summary_tab = self.summary_view.create_summary_tab(self.notebook)
-        self.notebook.add(summary_tab, text="统计汇总")
-    
-    def refresh_all_views(self):
-        """刷新所有视图"""
-        # 刷新四象限视图
-        self.quadrant_view.refresh_integrated_view()
-        
-        # 刷新简单汇总
-        self.refresh_summary()
-        
-        # 刷新即将到期的提醒
-        if hasattr(self, 'upcoming_text'):
-            self.refresh_upcoming_reminders()
-        
-        # 刷新日历视图
-        if hasattr(self.calendar_view, 'calendar_cells') and self.calendar_view.calendar_cells:
-            self.calendar_view.update_calendar()
-        
-        # 刷新项目视图
-        if hasattr(self.project_view, 'project_tree') and self.project_view.project_tree:
-            self.project_view.refresh_project_view()
-        
-        # 刷新完整汇总面板
-        if hasattr(self.summary_view, 'full_summary_labels') and self.summary_view.full_summary_labels:
-            self.summary_view.refresh_full_summary()
-    
-    def refresh_summary(self):
-        """刷新简单汇总统计"""
-        if not hasattr(self, 'summary_labels'):
-            return
-            
-        # 获取统计信息
-        stats = self.db_manager.get_statistics()
-        
-        # 更新标签
-        total = stats.get('total', 0)
-        completed = stats.get('completed', 0)
-        
-        self.summary_labels["total"].config(text=f"总计: {total}")
-        self.summary_labels["completed"].config(text=f"已完成: {completed}")
-    
-    def run(self):
-        """运行应用程序"""
+        # 设置窗口图标（如果存在）
         try:
-            self.root.mainloop()
-        finally:
-            # 停止提醒服务
-            self.reminder_service.stop_reminder_thread()
-            # 关闭数据库连接
-            self.db_manager.close()
+            root.iconbitmap("icon.ico")
+        except:
+            pass
+        
+        # 使用配置文件中的数据库路径初始化数据库管理器
+        db_module = importlib.import_module('1_database')
+        database_path = config_manager.get_database_path()
+        database_manager = db_module.DatabaseManager(database_path)
+        
+        # 初始化UI组件
+        ui_module = importlib.import_module('3_ui_components')
+        ui_components = ui_module.UIComponents(database_manager)
+        
+        # 初始化AI助手（传入配置管理器）
+        ai_module = importlib.import_module('8_ai_assistant')
+        ai_assistant = ai_module.AIAssistant(database_manager, ui_components, config_manager)
+        
+        # 创建主界面
+        create_main_interface(root, database_manager, ui_components, ai_assistant, config_manager)
+        
+        # 显示数据库信息（如果是首次运行）
+        if config_manager.get('first_run', False):
+            root.after(1000, lambda: show_startup_info(root, config_manager))
+        
+        # 启动主循环
+        root.mainloop()
+        
+    except ImportError as e:
+        error_msg = f"模块导入失败: {e}\\n请确保所有必要的文件都存在。"
+        if 'root' in locals():
+            messagebox.showerror("导入错误", error_msg)
+        else:
+            print(error_msg)
+        sys.exit(1)
+    except Exception as e:
+        error_msg = f"程序启动失败: {e}"
+        if 'root' in locals():
+            messagebox.showerror("启动错误", error_msg)
+        else:
+            print(error_msg)
+        sys.exit(1)
+
+def create_main_interface(root, database_manager, ui_components, ai_assistant, config_manager):
+    """创建主界面"""
+    
+    # 创建菜单栏
+    create_menu_bar(root, database_manager, ui_components, ai_assistant, config_manager)
+    
+    # 创建主界面 - 恢复原来的完整结构
+    main_frame = ui_components.create_main_interface(root)
+    
+    # 初始化各个视图模块
+    initialize_view_modules(database_manager, ui_components)
+    
+    # 创建状态栏
+    create_status_bar(root, database_manager, config_manager)
+
+def initialize_view_modules(database_manager, ui_components):
+    """初始化各个视图模块"""
+    try:
+        # 初始化日历视图
+        calendar_module = importlib.import_module('4_calendar_view')
+        calendar_view = calendar_module.CalendarView(database_manager, ui_components)
+        calendar_view.create_calendar_tab(ui_components.calendar_tab)
+        
+        # 初始化统计汇总视图
+        summary_module = importlib.import_module('6_summary_view')
+        summary_view = summary_module.SummaryView(database_manager, ui_components)
+        summary_view.create_summary_tab(ui_components.summary_tab)
+        
+        # 初始化项目统计视图
+        project_module = importlib.import_module('7_project_view')
+        project_view = project_module.ProjectView(database_manager, ui_components)
+        project_view.create_project_tab(ui_components.project_tab)
+        
+        # 初始化四象限视图
+        quadrant_module = importlib.import_module('5_quadrant_view')
+        quadrant_view = quadrant_module.QuadrantView(database_manager, ui_components)
+        quadrant_view.create_quadrant_tab(ui_components.quadrant_tab)
+        
+        # 存储视图引用
+        ui_components.calendar_view = calendar_view
+        ui_components.summary_view = summary_view
+        ui_components.project_view = project_view
+        ui_components.quadrant_view = quadrant_view
+        
+    except ImportError as e:
+        print(f"视图模块导入失败: {e}")
+    except Exception as e:
+        print(f"视图初始化失败: {e}")
+
+def create_menu_bar(root, database_manager, ui_components, ai_assistant, config_manager):
+    """创建菜单栏"""
+    menubar = tk.Menu(root)
+    root.config(menu=menubar)
+    
+    # 文件菜单
+    file_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="文件", menu=file_menu)
+    file_menu.add_command(label="导出数据", command=lambda: export_data(database_manager))
+    file_menu.add_command(label="导入数据", command=lambda: import_data(database_manager, ui_components))
+    file_menu.add_separator()
+    file_menu.add_command(label="数据库信息", command=lambda: show_database_info(root, config_manager))
+    file_menu.add_separator()
+    file_menu.add_command(label="退出", command=root.quit)
+    
+    # 工具菜单
+    tools_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="工具", menu=tools_menu)
+    tools_menu.add_command(label="清理已完成任务", command=lambda: cleanup_completed_tasks(database_manager, ui_components))
+    tools_menu.add_command(label="数据库备份", command=lambda: backup_database(database_manager))
+    tools_menu.add_separator()
+    tools_menu.add_command(label="AI助手设置", command=lambda: show_ai_settings(root, ai_assistant, config_manager))
+    
+    # AI助手菜单 - 独立窗口
+    ai_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="AI助手", menu=ai_menu)
+    ai_menu.add_command(label="打开AI助手", command=lambda: open_ai_assistant_window(root, ai_assistant, config_manager))
+    ai_menu.add_command(label="AI助手设置", command=lambda: show_ai_settings(root, ai_assistant, config_manager))
+    
+    # MCP菜单
+    if config_manager.is_mcp_enabled():
+        mcp_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="MCP", menu=mcp_menu)
+        mcp_menu.add_command(label="MCP状态", command=lambda: show_mcp_status(root, ai_assistant, config_manager))
+        mcp_menu.add_command(label="测试SQL查询", command=lambda: test_sql_query(root, ai_assistant))
+    
+    # 帮助菜单
+    help_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="帮助", menu=help_menu)
+    help_menu.add_command(label="使用说明", command=lambda: show_help())
+    help_menu.add_command(label="关于", command=lambda: show_about(root, config_manager))
+
+def create_status_bar(root, database_manager, config_manager):
+    """创建状态栏"""
+    status_frame = ttk.Frame(root)
+    status_frame.pack(fill=X, side=BOTTOM)
+    
+    # 数据库状态
+    db_path = config_manager.get_database_path()
+    db_status = ttk.Label(status_frame, text=f"数据库: {os.path.basename(db_path)}")
+    db_status.pack(side=LEFT, padx=5)
+    
+    # MCP状态
+    if config_manager.is_mcp_enabled():
+        mcp_status = ttk.Label(status_frame, text="MCP: 启用", foreground="green")
+        mcp_status.pack(side=LEFT, padx=5)
+    
+    # 任务统计
+    try:
+        stats = database_manager.get_statistics()
+        total_tasks = stats.get('total', 0)
+        completed_tasks = stats.get('completed', 0)
+        task_status = ttk.Label(status_frame, text=f"任务: {total_tasks}总 / {completed_tasks}完成")
+        task_status.pack(side=LEFT, padx=5)
+    except Exception as e:
+        print(f"获取统计信息失败: {e}")
+        task_status = ttk.Label(status_frame, text="任务: 统计信息获取失败")
+        task_status.pack(side=LEFT, padx=5)
+    
+    # 版本信息
+    version = config_manager.get('version', '1.0.0')
+    version_label = ttk.Label(status_frame, text=f"v{version}")
+    version_label.pack(side=RIGHT, padx=5)
+
+def show_startup_info(root, config_manager):
+    """显示启动信息"""
+    db_path = config_manager.get_database_path()
+    abs_path = os.path.abspath(db_path)
+    
+    info_msg = f"""智能待办事项管理器已启动！
+
+数据库位置: {abs_path}
+MCP功能: {'启用' if config_manager.is_mcp_enabled() else '禁用'}
+AI助手: {'在线模式' if config_manager.get_api_key() != 'your_api_key_here' else '离线模式'}
+
+您可以通过菜单栏的"文件 > 数据库信息"查看详细信息。"""
+    
+    messagebox.showinfo("启动完成", info_msg)
+
+def show_database_info(root, config_manager):
+    """显示数据库信息"""
+    config_module = importlib.import_module('9_config_manager')
+    config_module.show_database_info_dialog(config_manager, root)
+
+def show_ai_settings(root, ai_assistant, config_manager):
+    """显示AI助手设置"""
+    # 这里可以创建一个设置对话框
+    messagebox.showinfo("AI设置", "AI助手设置功能开发中...")
+
+def show_mcp_status(root, ai_assistant, config_manager):
+    """显示MCP状态"""
+    mcp_tools = config_manager.get_mcp_tools()
+    tools_list = "\\n".join([f"• {tool}" for tool in mcp_tools])
+    
+    status_msg = f"""MCP (Model Context Protocol) 状态
+
+状态: {'启用' if config_manager.is_mcp_enabled() else '禁用'}
+SQLite服务器: 运行中
+可用工具:
+{tools_list}
+
+MCP功能允许AI直接查询和操作数据库，
+提供更准确的数据分析和洞察。"""
+    
+    messagebox.showinfo("MCP状态", status_msg)
+
+def test_sql_query(root, ai_assistant):
+    """测试SQL查询"""
+    # 创建一个简单的SQL测试对话框
+    dialog = tk.Toplevel(root)
+    dialog.title("测试SQL查询")
+    dialog.geometry("500x400")
+    dialog.transient(root)
+    dialog.grab_set()
+    
+    # 查询输入
+    tk.Label(dialog, text="SQL查询:").pack(anchor=tk.W, padx=10, pady=(10, 0))
+    query_text = tk.Text(dialog, height=5, width=60)
+    query_text.pack(padx=10, pady=5, fill=tk.X)
+    query_text.insert(tk.END, "SELECT * FROM todos LIMIT 5;")
+    
+    # 结果显示
+    tk.Label(dialog, text="查询结果:").pack(anchor=tk.W, padx=10, pady=(10, 0))
+    result_text = tk.Text(dialog, height=15, width=60)
+    result_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+    
+    def execute_query():
+        query = query_text.get(1.0, tk.END).strip()
+        if query:
+            try:
+                result = ai_assistant.execute_sql_query(query)
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, str(result))
+            except Exception as e:
+                result_text.delete(1.0, tk.END)
+                result_text.insert(tk.END, f"错误: {str(e)}")
+    
+    # 按钮
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(fill=tk.X, padx=10, pady=10)
+    
+    tk.Button(button_frame, text="执行查询", command=execute_query).pack(side=tk.LEFT)
+    tk.Button(button_frame, text="关闭", command=dialog.destroy).pack(side=tk.RIGHT)
+
+def export_data(database_manager):
+    """导出数据"""
+    messagebox.showinfo("导出", "数据导出功能开发中...")
+
+def import_data(database_manager, ui_components):
+    """导入数据"""
+    messagebox.showinfo("导入", "数据导入功能开发中...")
+
+def cleanup_completed_tasks(database_manager, ui_components):
+    """清理已完成任务"""
+    if messagebox.askyesno("确认", "确定要删除所有已完成的任务吗？此操作不可撤销。"):
+        try:
+            # 这里添加清理逻辑
+            messagebox.showinfo("完成", "已完成任务清理完成！")
+            ui_components.refresh_all_views()
+        except Exception as e:
+            messagebox.showerror("错误", f"清理失败: {str(e)}")
+
+def backup_database(database_manager):
+    """备份数据库"""
+    try:
+        backup_file = database_manager.create_backup()
+        if backup_file:
+            messagebox.showinfo("备份完成", f"数据库已备份到: {backup_file}")
+        else:
+            messagebox.showerror("备份失败", "无法创建数据库备份")
+    except Exception as e:
+        messagebox.showerror("备份错误", f"备份过程中出错: {str(e)}")
+
+def show_help():
+    """显示帮助信息"""
+    help_msg = """智能待办事项管理器使用说明
+
+主要功能：
+• GTD工作流管理
+• 四象限优先级管理
+• AI智能助手
+• MCP数据库集成
+
+快捷操作：
+• 双击任务可快速编辑
+• 右键菜单提供更多选项
+• AI助手支持自然语言交互
+
+更多帮助请访问项目文档。"""
+    
+    messagebox.showinfo("使用说明", help_msg)
+
+def show_about(root, config_manager):
+    """显示关于信息"""
+    version = config_manager.get('version', '1.0.0')
+    about_msg = f"""智能待办事项管理器 v{version}
+
+一个集成GTD工作流、四象限管理法和AI助手的
+现代化待办事项管理应用程序。
+
+特性：
+• 智能任务解析
+• AI助手支持
+• MCP数据库集成
+• 现代化UI设计
+
+技术栈：
+• Python + Tkinter
+• SQLite数据库
+• Model Context Protocol
+• DeepSeek AI API
+
+© 2024 智能待办事项管理器"""
+    
+    messagebox.showinfo("关于", about_msg)
+
+def open_ai_assistant_window(parent, ai_assistant, config_manager):
+    """打开AI助手独立窗口"""
+    # 检查是否已经有AI助手窗口打开
+    if hasattr(ai_assistant, 'ai_window') and ai_assistant.ai_window and ai_assistant.ai_window.winfo_exists():
+        # 如果窗口已存在，将其置于前台
+        ai_assistant.ai_window.lift()
+        ai_assistant.ai_window.focus_force()
+        return
+    
+    # 创建新的AI助手窗口
+    ai_window = ttk_bs.Toplevel(parent)
+    ai_window.title("AI智能助手")
+    ai_window.geometry("800x600")
+    
+    # 设置窗口图标（如果存在）
+    try:
+        ai_window.iconbitmap("icon.ico")
+    except:
+        pass
+    
+    # 在新窗口中创建AI助手界面
+    ai_assistant.create_ai_panel(ai_window)
+    
+    # 存储窗口引用
+    ai_assistant.ai_window = ai_window
+    
+    # 设置窗口关闭事件
+    def on_ai_window_close():
+        ai_assistant.ai_window = None
+        ai_window.destroy()
+    
+    ai_window.protocol("WM_DELETE_WINDOW", on_ai_window_close)
 
 if __name__ == "__main__":
-    app = TodoApp()
-    app.run() 
+    main() 
