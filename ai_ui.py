@@ -270,7 +270,7 @@ class AIUserInterface:
         # 在后台处理AI响应
         def process_response():
             try:
-                self.ai_assistant.process_ai_response(user_text)
+                self.ai_assistant.process_user_input(user_text)
             finally:
                 # 恢复发送按钮
                 def restore_button():

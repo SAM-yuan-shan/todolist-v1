@@ -10,24 +10,19 @@ from datetime import datetime
 class SQLHandler:
     """SQL查询处理器"""
     
-    def __init__(self, database_manager):
+    def __init__(self, db_name):
         """初始化SQL处理器"""
-        self.database_manager = database_manager
+        self.db_name = db_name # Store db_name
         self.sql_connection = None
         self.init_sql_connection()
     
     def init_sql_connection(self):
         """初始化SQLite连接"""
         try:
-            # 使用数据库管理器的数据库文件
-            if hasattr(self.database_manager, 'db_name'):
-                self.sql_connection = sqlite3.connect(self.database_manager.db_name, check_same_thread=False)
-                self.sql_connection.row_factory = sqlite3.Row  # 使结果可以按列名访问
-                print(f"SQL连接初始化成功: {self.database_manager.db_name}")
-                return True
-            else:
-                print("数据库管理器没有db_name属性")
-                return False
+            self.sql_connection = sqlite3.connect(self.db_name, check_same_thread=False)
+            self.sql_connection.row_factory = sqlite3.Row  # 使结果可以按列名访问
+            print(f"SQL连接初始化成功: {self.db_name}")
+            return True
         except Exception as e:
             print(f"初始化SQL连接失败: {e}")
             return False
@@ -280,4 +275,38 @@ class SQLHandler:
             return result.strip()
             
         except Exception as e:
-            return f"获取任务概览失败: {str(e)}" 
+            return f"获取任务概览失败: {str(e)}"
+    
+    def get_mcp_schema_prompt(self):
+        """生成用于AI的数据库模式和操作说明提示。"""
+        prompt_parts = []
+        prompt_parts.append("你可以与一个SQLite数据库交互来管理待办事项。数据库包含以下表和列：")
+
+        success_tables, tables = self.list_all_tables()
+        if not success_tables or not tables:
+            # 如果没有表或者获取表失败，至少告知AI数据库是空的或者有问题
+            prompt_parts.append("\n  注意: 当前数据库中没有表，或者无法获取表列表。")
+            # return None # 或者可以继续生成操作说明，让AI知道如何创建表等（如果支持的话）
+        else:
+            for table_name in tables:
+                prompt_parts.append(f"\n表名: {table_name}")
+                success_schema, schema_info = self.get_table_schema(table_name)
+                if success_schema and schema_info:
+                    for column in schema_info:
+                        col_name = column.get('name', 'N/A')
+                        col_type = column.get('type', 'N/A')
+                        col_pk = " (主键)" if column.get('pk') else ""
+                        prompt_parts.append(f"    - 列: {col_name} (类型: {col_type}){col_pk}")
+                else:
+                    prompt_parts.append("    (无法获取此表的详细模式)")
+        
+        prompt_parts.append("\n你可以通过生成特定格式的指令来查询或修改数据库。")
+        prompt_parts.append("\n重要: 当你需要我执行数据库查询时，请明确指出，例如：")
+        prompt_parts.append("  '查询所有待办事项' 或 '帮我看看状态为pending的任务有哪些'。")
+        prompt_parts.append("  我将尝试将你的自然语言请求转换为SQL语句并执行。")
+        prompt_parts.append("\n如果你想让我执行一个你构造好的精确SQL语句，请将SQL语句包裹在特殊的标记中，格式如下：")
+        prompt_parts.append("  `EXECUTE_SQL: SELECT * FROM todos WHERE status = 'completed'`")
+        prompt_parts.append("  其中 `EXECUTE_SQL:` 是固定的前缀，后面紧跟你的SQL语句。")
+        prompt_parts.append("  只支持 SELECT, INSERT, UPDATE, DELETE 语句。")
+        
+        return "\n".join(prompt_parts) 
